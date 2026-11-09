@@ -27,7 +27,7 @@ interface TenantSeed {
   legalEntity: { cnpj: string; legalName: string; tradeName: string };
   garage: { name: string };
   adminEmail: string;
-  clients: { legalName: string; cnpj: string; tradeName: string }[];
+  clients: { legalName: string; cnpj: string; tradeName: string; contractCode: string }[];
 }
 
 const TENANTS: TenantSeed[] = [
@@ -42,8 +42,8 @@ const TENANTS: TenantSeed[] = [
     garage: { name: 'Garagem Central — DEMO' },
     adminEmail: 'admin.pct@demo.gestlog.local',
     clients: [
-      { legalName: 'Fábrica Jandira S/A — DEMO', cnpj: '00000000000272', tradeName: 'Fábrica Jandira — DEMO' },
-      { legalName: 'Hospital Alpha Ltda — DEMO', cnpj: '00000000000353', tradeName: 'Hospital Alpha — DEMO' },
+      { legalName: 'Fábrica Jandira S/A — DEMO', cnpj: '00000000000272', tradeName: 'Fábrica Jandira — DEMO', contractCode: 'CTR-JDA-001' },
+      { legalName: 'Hospital Alpha Ltda — DEMO', cnpj: '00000000000353', tradeName: 'Hospital Alpha — DEMO', contractCode: 'CTR-ALP-001' },
     ],
   },
   {
@@ -57,8 +57,8 @@ const TENANTS: TenantSeed[] = [
     garage: { name: 'Garagem Norte — DEMO' },
     adminEmail: 'admin.citybus@demo.gestlog.local',
     clients: [
-      { legalName: 'Distrito Industrial LTDA — DEMO', cnpj: '00000000000515', tradeName: 'Distrito Industrial — DEMO' },
-      { legalName: 'Call Center Beta S/A — DEMO', cnpj: '00000000000696', tradeName: 'Call Center Beta — DEMO' },
+      { legalName: 'Distrito Industrial LTDA — DEMO', cnpj: '00000000000515', tradeName: 'Distrito Industrial — DEMO', contractCode: 'CTR-DIN-001' },
+      { legalName: 'Call Center Beta S/A — DEMO', cnpj: '00000000000696', tradeName: 'Call Center Beta — DEMO', contractCode: 'CTR-CCB-001' },
     ],
   },
 ];
@@ -83,8 +83,10 @@ const SYSTEM_ROLES: {
       'clients.manage',
       'clm.contracts.read',
       'clm.contracts.manage',
+      'clm.contracts.approve',
       'routing.routes.read',
       'routing.routes.manage',
+      'routing.routes.publish',
       'fleet.vehicles.read',
       'fleet.vehicles.manage',
       'workforce.drivers.read',
@@ -92,6 +94,7 @@ const SYSTEM_ROLES: {
       'operations.trips.read',
       'operations.trips.dispatch',
       'operations.trips.validate',
+      'operations.events.submit',
     ],
   },
   {
@@ -103,6 +106,7 @@ const SYSTEM_ROLES: {
       'clm.contracts.read',
       'routing.routes.read',
       'routing.routes.manage',
+      'routing.routes.publish',
       'fleet.vehicles.read',
       'workforce.drivers.read',
       'operations.trips.read',
@@ -218,9 +222,9 @@ async function seed(prisma: PrismaClient): Promise<void> {
         },
       });
 
-      // Clientes corporativos.
+      // Clientes corporativos + contrato DEMO vinculado à primeira pessoa jurídica.
       for (const clientSeed of tenantSeed.clients) {
-        await tx.client.upsert({
+        const client = await tx.client.upsert({
           where: { tenantId_cnpj: { tenantId: tenant.id, cnpj: clientSeed.cnpj } },
           update: {
             legalName: clientSeed.legalName,
@@ -233,6 +237,23 @@ async function seed(prisma: PrismaClient): Promise<void> {
             legalName: clientSeed.legalName,
             tradeName: clientSeed.tradeName,
             status: 'ACTIVE',
+          },
+        });
+
+        await tx.contract.upsert({
+          where: { tenantId_code: { tenantId: tenant.id, code: clientSeed.contractCode } },
+          update: {
+            title: `Fretamento corporativo — ${clientSeed.tradeName}`,
+            status: 'ACTIVE',
+          },
+          create: {
+            tenantId: tenant.id,
+            clientId: client.id,
+            legalEntityId: legalEntity.id,
+            code: clientSeed.contractCode,
+            title: `Fretamento corporativo — ${clientSeed.tradeName}`,
+            status: 'ACTIVE',
+            startDate: new Date('2026-01-01T00:00:00Z'),
           },
         });
       }

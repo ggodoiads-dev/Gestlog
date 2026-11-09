@@ -9,6 +9,9 @@ import { TenantContextMiddleware } from './auth/tenant-context.middleware';
 import { HealthModule } from './health/health.module';
 import { ClientsModule } from './modules/clients/clients.module';
 import { CoreModule } from './modules/core/core.module';
+import { FleetModule } from './modules/fleet/fleet.module';
+import { OperationsModule } from './modules/operations/operations.module';
+import { RoutingModule } from './modules/routing/routing.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { TenantContextModule } from './tenant-context/tenant-context.module';
 
@@ -48,6 +51,9 @@ import { TenantContextModule } from './tenant-context/tenant-context.module';
     HealthModule,
     CoreModule,
     ClientsModule,
+    RoutingModule,
+    FleetModule,
+    OperationsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },
