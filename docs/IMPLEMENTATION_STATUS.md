@@ -44,11 +44,11 @@
 | 02 | Clients / Portal | `in-progress` | /v1/clients (list + detail) com RLS validado. Portal UI ainda não. |
 | 03 | CLM | `scaffolded` | Contratos seedados por tenant (CTR-*-001). Endpoints virão com reajuste/assinatura. |
 | 04 | Smart Routing | `in-progress` | /v1/routes (list/create/detail) + /v1/routes/:id/versions (create/publish). Versão publicada é imutável. |
-| 05 | Workforce | `not-started` | |
+| 05 | Workforce | `in-progress` | /v1/drivers (list/create) com DriverLicense + checkEligibilityInTx (status + categoria + validade). |
 | 06 | Fleet | `in-progress` | /v1/vehicles (list/create) com VehicleEligibilityProjection recomputada por operationalStatus (base para expansão com docs/OS). |
 | 07 | Maintenance | `not-started` | |
 | 08 | Fuel | `not-started` | |
-| 09 | AutoDispatch | `not-started` | |
+| 09 | AutoDispatch | `in-progress` | POST /v1/scheduled-trips/:id/assignments + DELETE /v1/assignments/:id. Atomicidade via unique index parcial (state != CANCELLED/SUPERSEDED). Valida elegibilidade de veículo e motorista. |
 | 10 | Operations | `in-progress` | /v1/routes/:id/expand + /v1/scheduled-trips?date. Expansão idempotente; versão imutável: publicação de nova versão não reescreve trips antigas. |
 | 11 | Driver App API | `not-started` | |
 | 12 | Billing | `not-started` | |
@@ -77,6 +77,7 @@ caso ganha teste automatizado.
 |----|--------|-------|
 | AT-01 (tenants não vazam entre si) | `homologated` | `apps/api/test/tenant-isolation.e2e.spec.ts` |
 | AT-02 (usuário sem autoridade não aprova) | `in-progress` | guard RBAC implementado; aprovações viram no módulo Governance |
+| AT-08 (designação atômica concorrente) | `homologated` | `apps/api/test/autodispatch-concurrency.e2e.spec.ts` — unique index parcial no banco |
 | AT-17 (contrato reajustado preserva histórico) | `in-progress` | versionamento imutável de rotas implementado — AT-17 propriamente dito aguarda `ContractAdjustment` |
 | AT-35 (rotagrama recorrente estável sem lista diária) | `in-progress` | expansão idempotente validada; publicação de nova versão não reescreve trips passadas — `apps/api/test/routing-versioning.e2e.spec.ts` |
 | AT-03 … AT-41 (demais) | `not-started` | — |
