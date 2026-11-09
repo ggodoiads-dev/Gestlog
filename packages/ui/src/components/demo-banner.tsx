@@ -1,3 +1,5 @@
+import type { ReactElement } from 'react';
+
 /**
  * Banner exibido em todo lugar onde um módulo depende de integração ainda
  * não homologada, OU usa dados de seed marcados __demo__.
@@ -11,7 +13,7 @@ export function DemoBanner({
 }: {
   module: string;
   reason: string;
-}): JSX.Element {
+}): ReactElement {
   return (
     <div
       role="status"

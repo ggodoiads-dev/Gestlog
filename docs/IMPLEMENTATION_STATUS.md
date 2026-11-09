@@ -29,7 +29,7 @@
 | RLS policies | `homologated` | `apps/api/test/tenant-isolation.e2e.spec.ts` — 6 testes verdes, incluindo tentativa cross-tenant via URL |
 | Backend NestJS | `in-progress` | `apps/api` — `/health*`, `/v1/auth/login`, `/v1/me`, `/v1/users`, `/v1/clients`, `/v1/clients/:id`. Guards JwtAuth + Permissions. TenantContextMiddleware propaga `TenantContext` via req + ALS. |
 | Design system base | `scaffolded` | `packages/ui` — tokens.css + Button + Badge + DemoBanner + preset Tailwind |
-| App web Next.js | `scaffolded` | `apps/web` — landing dia 0 com DemoBanner |
+| App web Next.js | `in-progress` | `apps/web` — login (/login), dashboard (/), Rotagrama (/rotagrama + /rotagrama/:id) com AppShell + sidebar modular. Sessão via cookie HttpOnly; middleware protege rotas; Server Components consomem a API com Bearer. |
 | Driver PWA Next.js | `scaffolded` | `apps/driver` — landing dia 0 |
 | `packages/shared` (Money, Zod, Tenant) | `implemented` | `packages/shared/src/*`; `money.spec.ts` cobre precisão, moeda, centavos, pt-BR, arredondamento, formatação |
 | `packages/domain` placeholder | `not-started` | aguardando primeiro caso de uso |

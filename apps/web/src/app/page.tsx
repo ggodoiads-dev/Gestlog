@@ -1,66 +1,85 @@
-import Link from 'next/link';
+import { DemoBanner } from '@gestlog/ui';
+import { redirect } from 'next/navigation';
 
-import { Badge, Button, DemoBanner } from '@gestlog/ui';
+import { AppShell } from '@/components/app-shell';
+import { apiFetch } from '@/lib/api';
+import { getSession } from '@/lib/session';
 
-export default function Home(): JSX.Element {
+interface Me {
+  tenant: { id: string; slug: string; name: string };
+  user: { id: string; email: string; fullName: string };
+  roles: string[];
+  permissions: string[];
+}
+
+export default async function HomePage(): Promise<React.ReactElement> {
+  const session = await getSession();
+  if (!session) redirect('/login');
+
+  const me = await apiFetch<Me>('/v1/me');
+  const [{ items: routes }, { items: vehicles }, { items: drivers }, { items: clients }] =
+    await Promise.all([
+      apiFetch<{ items: unknown[] }>('/v1/routes'),
+      apiFetch<{ items: unknown[] }>('/v1/vehicles'),
+      apiFetch<{ items: unknown[] }>('/v1/drivers'),
+      apiFetch<{ items: unknown[] }>('/v1/clients'),
+    ]);
+
+  const metrics = [
+    { label: 'Clientes ativos', value: clients.length },
+    { label: 'Rotas cadastradas', value: routes.length },
+    { label: 'Veículos', value: vehicles.length },
+    { label: 'Motoristas', value: drivers.length },
+  ];
+
   return (
-    <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-10 px-6 py-16">
-      <header className="flex flex-col gap-4">
-        <div className="flex items-center gap-3">
-          <span className="font-mono text-xs tracking-wider text-ink-500">GESTLOG · v0.0.0</span>
-          <Badge tone="warning">dia 0 · pré-release</Badge>
-        </div>
-        <h1 className="max-w-3xl text-4xl font-semibold tracking-tight text-ink-900 dark:text-white">
-          Sua transportadora sob controle.
-        </h1>
-        <p className="max-w-2xl text-base leading-relaxed text-ink-700 dark:text-white/80">
-          ERP SaaS multi-tenant para transportadoras brasileiras de fretamento corporativo. O
-          coração do produto é o <strong>Rotagrama</strong> — rotas, turnos, motoristas e
-          veículos sob torre de controle. A camada financeira existe para sustentar essa
-          operação com previsibilidade.
-        </p>
-      </header>
-
-      <DemoBanner
-        module="Plataforma inteira"
-        reason="Repositório em construção. Nenhum dado real, nenhuma integração homologada. Este é o scaffold inicial — veja docs/IMPLEMENTATION_STATUS.md."
-      />
-
-      <section className="grid gap-4 md:grid-cols-2">
-        <article className="rounded-card border border-surface-200 bg-surface-card p-6 shadow-sm dark:border-navy-700 dark:bg-navy-900">
-          <h2 className="text-lg font-semibold text-ink-900 dark:text-white">
-            Contrato de produto
-          </h2>
-          <p className="mt-2 text-sm text-ink-700 dark:text-white/80">
-            Antes do código, a documentação define o que será construído, o que está decidido e
-            o que ainda precisa validação. Leia primeiro.
+    <AppShell session={session} tenantName={me.tenant.name} activePath="/">
+      <div className="space-y-6">
+        <header className="flex flex-col gap-1">
+          <span className="text-xs font-medium uppercase tracking-widest text-ink-500">
+            Visão geral
+          </span>
+          <h1 className="text-2xl font-semibold text-ink-900 dark:text-white">
+            Olá, {me.user.fullName}.
+          </h1>
+          <p className="text-sm text-ink-700 dark:text-white/70">
+            Central de comando da transportadora. Este dashboard ainda é um esboço — as
+            métricas reais (EBITDA, captura anual, saúde operacional) chegam nas próximas
+            fatias.
           </p>
-          <div className="mt-4 flex gap-2">
-            <Link
-              href="https://github.com/ggodoiads-dev/gestlog/tree/claude/sweet-cray-mmitsi/docs"
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-control border border-surface-200 bg-surface-card px-4 text-sm font-medium text-ink-900 transition-colors hover:bg-surface-100 focus-visible:outline-accent dark:border-navy-700 dark:bg-navy-800 dark:text-white dark:hover:bg-navy-700"
+        </header>
+
+        <DemoBanner
+          module="Dashboard executivo"
+          reason="Métricas são contagens diretas dos endpoints de domínio. KPIs financeiros virão quando Finance estiver homologado."
+        />
+
+        <section className="grid gap-4 md:grid-cols-4">
+          {metrics.map((m) => (
+            <article
+              key={m.label}
+              className="rounded-card border border-surface-200 bg-surface-card p-5 shadow-sm dark:border-navy-700 dark:bg-navy-900"
             >
-              Documentação
-            </Link>
-          </div>
-        </article>
+              <div className="text-[11px] font-medium uppercase tracking-wider text-ink-500">
+                {m.label}
+              </div>
+              <div className="mt-2 font-mono text-3xl font-semibold text-ink-900 tabular-nums dark:text-white">
+                {m.value}
+              </div>
+              <div className="mt-1 text-xs text-ink-500">fonte: API · agora</div>
+            </article>
+          ))}
+        </section>
 
-        <article className="rounded-card border border-surface-200 bg-surface-card p-6 shadow-sm dark:border-navy-700 dark:bg-navy-900">
-          <h2 className="text-lg font-semibold text-ink-900 dark:text-white">Próximos alvos</h2>
-          <ul className="mt-2 space-y-1 text-sm text-ink-700 dark:text-white/80">
-            <li>• Módulo <code>core</code> (tenant, users, roles, auditoria)</li>
-            <li>• Módulo <code>routing</code> — Rotagrama como tela assinatura</li>
-            <li>• Módulo <code>fleet</code> + elegibilidade consolidada</li>
-            <li>• Módulo <code>operations</code> + driver app</li>
-            <li>• Camada financeira (medição → faturamento → AR → DRE/EBITDA)</li>
+        <section className="rounded-card border border-surface-200 bg-surface-card p-6 shadow-sm dark:border-navy-700 dark:bg-navy-900">
+          <h2 className="text-lg font-semibold text-ink-900 dark:text-white">Próximas ações</h2>
+          <ul className="mt-3 space-y-2 text-sm text-ink-700 dark:text-white/80">
+            <li>• Criar uma rota, publicar versão e expandir viagens em <strong>Operações → Rotagrama</strong>.</li>
+            <li>• Cadastrar veículos (Frota) e motoristas (Pessoas) para habilitar designação.</li>
+            <li>• Próxima fatia do produto: faturamento + DRE.</li>
           </ul>
-        </article>
-      </section>
-
-      <footer className="mt-auto flex items-center justify-between border-t border-surface-200 pt-6 text-xs text-ink-500 dark:border-navy-700">
-        <span>© 2026 GESTLOG — proprietary.</span>
-        <span className="font-mono">build dia 0</span>
-      </footer>
-    </main>
+        </section>
+      </div>
+    </AppShell>
   );
 }

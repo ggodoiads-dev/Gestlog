@@ -9,7 +9,7 @@ export const metadata: Metadata = {
     'ERP SaaS multi-tenant para transportadoras brasileiras de fretamento corporativo. Rotagrama, operação e financeiro em uma única central.',
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }): JSX.Element {
+export default function RootLayout({ children }: { children: React.ReactNode }): React.ReactElement {
   return (
     <html lang="pt-BR" suppressHydrationWarning>
       <body>{children}</body>

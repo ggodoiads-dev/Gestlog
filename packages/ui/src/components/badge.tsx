@@ -1,6 +1,6 @@
-import type { ReactNode } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 
-import { cn } from '../utils/cn.js';
+import { cn } from '../utils/cn';
 
 export type BadgeTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent';
 
@@ -26,7 +26,7 @@ export function Badge({
   children: ReactNode;
   className?: string;
   title?: string;
-}): JSX.Element {
+}): ReactElement {
   return (
     <span
       title={title}
