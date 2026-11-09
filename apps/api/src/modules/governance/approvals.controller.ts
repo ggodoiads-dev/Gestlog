@@ -84,4 +84,12 @@ export class ApprovalsController {
   async cancel(@Req() req: Request, @Param('id') id: string, @Query('reason') reason?: string) {
     return this.service.cancel(this.requireCtx(req), id, reason ?? '');
   }
+
+  @Post('expire-stale')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions('governance.approvals.decide')
+  @ApiOperation({ summary: 'AT-05: marca como EXPIRED pedidos cujo SLA estourou' })
+  async expireStale(@Req() req: Request) {
+    return this.service.expireStale(this.requireCtx(req));
+  }
 }

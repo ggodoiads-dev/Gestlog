@@ -129,6 +129,59 @@ export class ApprovalsService {
     dto: CreateApprovalDto,
   ): Promise<ApprovalView> {
     return this.prisma.withTenantFromCtx(ctx, async (tx) => {
+      // AT-06 oficial: detecta fracionamento. Soma pedidos do mesmo
+      // requester + mesmo "supplierName" (quando presente no snapshot) nos
+      // últimos 7 dias em state ∈ (PENDING, APPROVED) de subject_type =
+      // payable_invoice. Se a soma + esta > FRACTIONATION_THRESHOLD_CENTS,
+      // bloqueia com 409 FRACTIONATION_DETECTED.
+      if (
+        dto.subjectType === 'payable_invoice' &&
+        dto.amountCents !== undefined
+      ) {
+        const supplierName = (dto.snapshot as Record<string, unknown>)
+          ?.supplierName;
+        if (typeof supplierName === 'string' && supplierName.length > 0) {
+          const windowStart = new Date(Date.now() - 7 * 86_400_000);
+          const peers = await tx.approvalRequest.findMany({
+            where: {
+              requestedBy: ctx.userId,
+              subjectType: 'payable_invoice',
+              state: { in: ['PENDING', 'APPROVED'] },
+              createdAt: { gte: windowStart },
+              amountCents: { not: null },
+            },
+            select: { id: true, amountCents: true, snapshotJson: true },
+          });
+          const sameSupplier = peers.filter((p) => {
+            const snap = p.snapshotJson as Record<string, unknown> | null;
+            return (
+              snap !== null &&
+              typeof snap?.supplierName === 'string' &&
+              snap.supplierName === supplierName
+            );
+          });
+          const sumPrevious = sameSupplier.reduce(
+            (acc, p) => acc + (p.amountCents ?? 0n),
+            0n,
+          );
+          const total = sumPrevious + dto.amountCents;
+          const threshold = BigInt(
+            process.env.GOVERNANCE_FRACTIONATION_THRESHOLD_CENTS ?? '1000000',
+          );
+          if (total > threshold && sameSupplier.length >= 1) {
+            throw new ConflictException({
+              message:
+                'soma de pedidos do mesmo solicitante para o mesmo fornecedor em 7 dias ultrapassa o limite de fracionamento — crie um pedido único com o valor total',
+              code: 'FRACTIONATION_DETECTED',
+              supplierName,
+              totalCents: total.toString(),
+              thresholdCents: threshold.toString(),
+              peerRequestIds: sameSupplier.map((p) => p.id),
+            });
+          }
+        }
+      }
+
       const req = await tx.approvalRequest.create({
         data: {
           tenantId: ctx.tenantId,
@@ -140,6 +193,7 @@ export class ApprovalsService {
           ...(dto.amountCents !== undefined ? { amountCents: dto.amountCents } : {}),
           ...(dto.currency !== undefined ? { currency: dto.currency } : {}),
           requiredApprovals: dto.requiredApprovals,
+          ...(dto.slaMinutes !== undefined ? { slaMinutes: dto.slaMinutes } : {}),
           snapshotJson: dto.snapshot as Prisma.InputJsonValue,
         },
       });
@@ -147,7 +201,82 @@ export class ApprovalsService {
     });
   }
 
+  /**
+   * AT-05: marca como EXPIRED todos os pedidos cujo prazo (createdAt +
+   * slaMinutes) estourou enquanto ainda estavam PENDING. Retorna quantos
+   * foram afetados. Chamado por job periódico OU manualmente pelo admin
+   * via POST /v1/approvals/expire-stale.
+   */
+  async expireStale(ctx: {
+    tenantId: string;
+    userId: string;
+  }): Promise<{ expired: number }> {
+    return this.prisma.withTenantFromCtx(ctx, async (tx) => {
+      const pendings = await tx.approvalRequest.findMany({
+        where: { state: 'PENDING' },
+        select: { id: true, createdAt: true, slaMinutes: true },
+      });
+      const now = Date.now();
+      const ids = pendings
+        .filter((p) => now > p.createdAt.getTime() + p.slaMinutes * 60_000)
+        .map((p) => p.id);
+      if (ids.length === 0) return { expired: 0 };
+      await tx.approvalRequest.updateMany({
+        where: { id: { in: ids } },
+        data: { state: 'EXPIRED', expiredAt: new Date() },
+      });
+      await this.audit.recordInTx(tx, ctx, {
+        action: 'governance.approval.expire-stale',
+        subjectType: 'ApprovalBatch',
+        subjectId: ids[0]!, // uuid válido
+        after: { expiredCount: ids.length, ids },
+      });
+      return { expired: ids.length };
+    });
+  }
+
   async decide(
+    ctx: { tenantId: string; userId: string },
+    requestId: string,
+    dto: DecisionDto,
+  ): Promise<ApprovalView> {
+    try {
+      return await this.decideInTx(ctx, requestId, dto);
+    } catch (err) {
+      // AT-05: se expirou durante APPROVE, marca EXPIRED fora da tx e
+      // re-lança um ConflictException limpo (sem o sentinel).
+      const resp =
+        err instanceof ConflictException ? (err.getResponse() as unknown) : null;
+      const sentinel =
+        resp && typeof resp === 'object' && '__markExpired' in resp
+          ? (resp as { __markExpired: string }).__markExpired
+          : null;
+      if (sentinel) {
+        await this.prisma.withTenantFromCtx(ctx, async (tx2) => {
+          await tx2.approvalRequest.update({
+            where: { id: sentinel },
+            data: { state: 'EXPIRED', expiredAt: new Date() },
+          });
+          await this.audit.recordInTx(tx2, ctx, {
+            action: 'governance.approval.expire-on-decide',
+            subjectType: 'ApprovalRequest',
+            subjectId: sentinel,
+            before: { state: 'PENDING' },
+            after: { state: 'EXPIRED' },
+          });
+        });
+        const { __markExpired: _drop, ...clean } = resp as {
+          __markExpired: string;
+          [k: string]: unknown;
+        };
+        void _drop;
+        throw new ConflictException(clean);
+      }
+      throw err;
+    }
+  }
+
+  private async decideInTx(
     ctx: { tenantId: string; userId: string },
     requestId: string,
     dto: DecisionDto,
@@ -163,6 +292,26 @@ export class ApprovalsService {
         throw new ConflictException(
           `pedido ${req.state.toLowerCase()} — não aceita nova decisão`,
         );
+      }
+
+      // AT-05: SLA estourou antes do voto? NÃO aprova por silêncio.
+      // Sinalizamos aqui; a tx atual não pode persistir o EXPIRED (o throw
+      // vai desfazer tudo). Fazemos a marcação em transação isolada após
+      // retornar o erro.
+      const deadline = req.createdAt.getTime() + req.slaMinutes * 60_000;
+      const expired = dto.decision === 'APPROVE' && Date.now() > deadline;
+      if (expired) {
+        // Abrir nova tx tenant-escopada, independente da atual.
+        // (Fora da outer tx: a RLS requer SET LOCAL app.current_tenant,
+        //  então chamamos via withTenantFromCtx abaixo depois de sair daqui.)
+        throw new ConflictException({
+          message:
+            'pedido expirou — SLA estourou antes da decisão; NUNCA aprova por silêncio (AT-05)',
+          code: 'EXPIRED',
+          slaMinutes: req.slaMinutes,
+          createdAt: req.createdAt.toISOString(),
+          __markExpired: requestId, // sentinel para o catch externo
+        });
       }
 
       // Invariante §15: sem autoaprovação.

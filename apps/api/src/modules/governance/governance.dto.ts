@@ -8,6 +8,9 @@ export const createApprovalSchema = z.object({
   amountCents: z.coerce.bigint().positive().optional(),
   currency: z.string().length(3).optional(),
   requiredApprovals: z.number().int().positive().max(5).default(1),
+  // AT-05: SLA em minutos. Default 1440 (24h). Mínimo 1 para testes;
+  // em produção, policy do tenant define pisos maiores por categoria.
+  slaMinutes: z.number().int().positive().max(43200).default(1440).optional(),
   snapshot: z.record(z.unknown()),
 });
 

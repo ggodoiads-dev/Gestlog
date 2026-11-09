@@ -1544,6 +1544,10 @@ model ApprovalRequest {
   snapshotJson    Json   @map("snapshot_json") // estado do subject NO MOMENTO do pedido
   state           ApprovalState @default(PENDING)
   requiredApprovals Int @default(1) @map("required_approvals")
+  // AT-05: SLA em minutos para esta decisão. Default 24h (1440 min).
+  // Expirado = createdAt + slaMinutes < now() enquanto state = PENDING.
+  slaMinutes      Int @default(1440) @map("sla_minutes")
+  expiredAt       DateTime? @map("expired_at")
   decidedAt       DateTime? @map("decided_at")
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
@@ -1563,6 +1567,7 @@ enum ApprovalState {
   RETURNED
   CANCELLED
   SUPERSEDED
+  EXPIRED // AT-05: SLA estourou sem decisão; NUNCA vira APPROVED
 
   @@schema("governance")
 }
