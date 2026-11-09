@@ -17,6 +17,11 @@ export interface TenantContext {
   tenantId: TenantId;
   userId: UserId;
   roles: string[];
+  /**
+   * Permissões efetivas (achatadas) calculadas no login. Troca de papéis
+   * exige novo login ou refresh explícito.
+   */
+  permissions: string[];
   legalEntityId?: LegalEntityId;
   garageId?: GarageId;
   /** `actedAsUserId` presente quando houver delegação ativa. */

@@ -65,6 +65,17 @@ jobs:
         env:
           DATABASE_URL: postgres://gestlog:gestlog@localhost:5432/gestlog
 
+      - name: Apply migrations
+        run: pnpm --filter @gestlog/db prisma:migrate:deploy
+        env:
+          DATABASE_URL: postgres://gestlog:gestlog@localhost:5432/gestlog
+
+      - name: Demo seeds
+        run: pnpm --filter @gestlog/db seed
+        env:
+          DATABASE_URL: postgres://gestlog:gestlog@localhost:5432/gestlog
+          FEATURE_DEMO_SEEDS: "true"
+
       - name: Lint
         run: pnpm lint
 
@@ -76,6 +87,15 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: E2E — multi-tenant isolation
+        run: pnpm --filter @gestlog/api test:e2e
+        env:
+          DATABASE_URL: postgres://gestlog:gestlog@localhost:5432/gestlog
+          DATABASE_APP_URL: postgres://gestlog_app:gestlog_app@localhost:5432/gestlog
+          DATABASE_ADMIN_URL: postgres://gestlog_admin:gestlog_admin@localhost:5432/gestlog
+          AUTH_SECRET: ci-only-test-secret-xxxxxxxxxxxxxxxxx
+          NODE_ENV: production
 
   docs-link-check:
     name: docs links

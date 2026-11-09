@@ -25,9 +25,9 @@
 | ADRs 0001/0002/0003 | `scaffolded` | `docs/adr/0001-0003` |
 | Monorepo pnpm + Turbo | `scaffolded` | `package.json`, `pnpm-workspace.yaml`, `turbo.json` |
 | Docker Compose (Postgres, Redis, Mailhog, MinIO) | `scaffolded` | `docker-compose.yml`, `scripts/bootstrap.mjs` |
-| Schema Prisma inicial | `scaffolded` | `packages/db/prisma/schema.prisma` (Core + Clients + CLM + Routing + Workforce + Fleet + Operations + Audit + Idempotency) |
-| RLS policies | `scaffolded` | `packages/db/prisma/rls.sql` — aguardando migration inicial |
-| Backend NestJS | `scaffolded` | `apps/api` — `/health`, `/health/ready`, `/health/integrations`, TenantContextService |
+| Schema Prisma inicial | `implemented` | 3 migrations aplicadas; FORCE RLS em todas as tabelas tenant-scoped |
+| RLS policies | `homologated` | `apps/api/test/tenant-isolation.e2e.spec.ts` — 6 testes verdes, incluindo tentativa cross-tenant via URL |
+| Backend NestJS | `in-progress` | `apps/api` — `/health*`, `/v1/auth/login`, `/v1/me`, `/v1/users`, `/v1/clients`, `/v1/clients/:id`. Guards JwtAuth + Permissions. TenantContextMiddleware propaga `TenantContext` via req + ALS. |
 | Design system base | `scaffolded` | `packages/ui` — tokens.css + Button + Badge + DemoBanner + preset Tailwind |
 | App web Next.js | `scaffolded` | `apps/web` — landing dia 0 com DemoBanner |
 | Driver PWA Next.js | `scaffolded` | `apps/driver` — landing dia 0 |
@@ -40,8 +40,8 @@
 
 | # | Módulo | Estado | Nota |
 |---|--------|--------|------|
-| 01 | Core (tenant, users, roles, audit, documents) | `not-started` | Próximo alvo. |
-| 02 | Clients / Portal | `not-started` | |
+| 01 | Core (tenant, users, roles, audit, documents) | `in-progress` | Auth + Tenant Context + RBAC + /v1/me + /v1/users. Audit events e documents ainda não implementados. |
+| 02 | Clients / Portal | `in-progress` | /v1/clients (list + detail) com RLS validado. Portal UI ainda não. |
 | 03 | CLM | `not-started` | |
 | 04 | Smart Routing | `not-started` | **Alvo prioritário** (coluna vertebral). |
 | 05 | Workforce | `not-started` | |
@@ -75,7 +75,9 @@ caso ganha teste automatizado.
 
 | AT | Estado | Teste |
 |----|--------|-------|
-| AT-01 … AT-41 | `not-started` | — |
+| AT-01 (tenants não vazam entre si) | `homologated` | `apps/api/test/tenant-isolation.e2e.spec.ts` |
+| AT-02 (usuário sem autoridade não aprova) | `in-progress` | guard RBAC implementado; aprovações viram no módulo Governance |
+| AT-03 … AT-41 | `not-started` | — |
 
 ## 4. Integrações (ver `INTEGRATION_CONTRACTS.md`)
 

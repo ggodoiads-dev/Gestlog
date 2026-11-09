@@ -5,12 +5,19 @@ import { Injectable } from '@nestjs/common';
 import type { TenantContext } from '@gestlog/shared';
 
 /**
- * Armazena o `TenantContext` por requisição usando AsyncLocalStorage.
+ * Propaga o `TenantContext` por requisição.
  *
- * O interceptor de request popula o contexto após a autenticação; qualquer
- * acesso ao banco em domínio passa por `withTenantScope` lendo deste serviço.
- * Fora de uma requisição autenticada, `get()` retorna `undefined` e os
- * repositórios tenant-scoped falham cedo e ruidosamente.
+ * Duas superfícies:
+ *   - `set(req, ctx)` grava no objeto `req` (fonte de verdade estável durante
+ *     o ciclo HTTP, mesmo quando o AsyncLocalStorage é perdido por quebras
+ *     de async context em pipelines do NestJS).
+ *   - `enter(ctx)` chama `AsyncLocalStorage.enterWith()` para permitir que
+ *     serviços de domínio (ex.: PrismaService.withTenant) obtenham o contexto
+ *     sem receber `req` como parâmetro.
+ *
+ * O método `require()` tenta primeiro o ALS e, se vazio, lê do `req` associado
+ * via `setRequest()`. Essa redundância é intencional: garante que o contexto
+ * sobreviva mesmo quando o pipeline do Nest cria novas tasks async.
  */
 @Injectable()
 export class TenantContextService {
@@ -18,6 +25,18 @@ export class TenantContextService {
 
   run<T>(ctx: TenantContext, fn: () => T): T {
     return this.storage.run(ctx, fn);
+  }
+
+  enter(ctx: TenantContext): void {
+    this.storage.enterWith(ctx);
+  }
+
+  setOnRequest(req: { gestlogTenantContext?: TenantContext }, ctx: TenantContext): void {
+    req.gestlogTenantContext = ctx;
+  }
+
+  fromRequest(req: { gestlogTenantContext?: TenantContext }): TenantContext | undefined {
+    return req.gestlogTenantContext;
   }
 
   get(): TenantContext | undefined {

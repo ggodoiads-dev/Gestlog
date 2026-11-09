@@ -438,7 +438,7 @@ model RouteTurn {
   tenantId       String @map("tenant_id") @db.Uuid
   routeVersionId String @map("route_version_id") @db.Uuid
   label          String // "A", "B", "Manhã", etc.
-  /// Hora-alvo de chegada ao destino (local time), armazenada como string HH:mm por ser padrão recorrente.
+  // Hora-alvo de chegada ao destino (local time), armazenada como string HH:mm por ser padrão recorrente.
   targetArrivalTime String @map("target_arrival_time") @db.VarChar(5)
   daysOfWeek     Int[]  @map("days_of_week") // 1=Seg...7=Dom
 
@@ -554,10 +554,8 @@ enum VehicleOperationalStatus {
   @@schema("fleet")
 }
 
-/**
- * Projeção read-only computada por Fleet. AutoDispatch e Operations lêem;
- * nunca criam status paralelos aqui. Atualizada por eventos de domínio.
- */
+// Projeção read-only computada por Fleet. AutoDispatch e Operations lêem;
+// nunca criam status paralelos aqui. Atualizada por eventos de domínio.
 model VehicleEligibilityProjection {
   vehicleId   String  @id @map("vehicle_id") @db.Uuid
   tenantId    String  @map("tenant_id") @db.Uuid
@@ -572,10 +570,8 @@ model VehicleEligibilityProjection {
   @@schema("fleet")
 }
 
-/**
- * Custódia atual e histórica do veículo. "Em custódia" ≠ "em viagem" ≠
- * "em garagem" ≠ "disponível".
- */
+// Custódia atual e histórica do veículo. "Em custódia" != "em viagem" !=
+// "em garagem" != "disponível".
 model Custody {
   id         String   @id @default(uuid()) @db.Uuid
   tenantId   String   @map("tenant_id") @db.Uuid
@@ -635,10 +631,8 @@ enum ScheduledTripState {
   @@schema("operations")
 }
 
-/**
- * Designação OFICIAL motorista + veículo + viagem. Fonte única — qualquer
- * módulo que precise saber "quem opera o quê" lê daqui.
- */
+// Designação OFICIAL motorista + veículo + viagem. Fonte única — qualquer
+// módulo que precise saber "quem opera o quê" lê daqui.
 model Assignment {
   id              String   @id @default(uuid()) @db.Uuid
   tenantId        String   @map("tenant_id") @db.Uuid

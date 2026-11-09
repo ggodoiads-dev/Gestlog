@@ -11,6 +11,10 @@
     "lib": ["ES2022"],
     "outDir": "dist",
     "rootDir": "src",
-    "types": ["node"]
+    "types": ["node"],
+    // Prisma 5 usa Proxy no construtor do PrismaClient; useDefineForClassFields
+    // sobrescreveria os acessores do Proxy em subclasses, deixando prisma.user
+    // undefined. Mantemos false para código de servidor.
+    "useDefineForClassFields": false
   }
 }
