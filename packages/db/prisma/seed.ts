@@ -137,6 +137,12 @@ const SYSTEM_ROLES: {
       'governance.approvals.decide',
       'governance.approvals.read',
       'governance.delegations.manage',
+      'procurement.orders.read',
+      'procurement.orders.manage',
+      'procurement.receive',
+      'ap.payables.read',
+      'ap.payables.manage',
+      'ap.payments.execute',
     ],
   },
   {

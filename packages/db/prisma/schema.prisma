@@ -11,7 +11,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  schemas  = ["core", "clients", "clm", "routing", "workforce", "fleet", "operations", "billing", "ar", "governance", "audit"]
+  schemas  = ["core", "clients", "clm", "routing", "workforce", "fleet", "operations", "billing", "ar", "procurement", "ap", "governance", "audit"]
 }
 
 // ============================================================================
@@ -886,6 +886,163 @@ enum ReceivableStatus {
   WRITTEN_OFF
 
   @@schema("ar")
+}
+
+// ============================================================================
+// PROCUREMENT — requisição → pedido → recebimento
+// ============================================================================
+
+model PurchaseOrder {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  legalEntityId  String   @map("legal_entity_id") @db.Uuid
+  code           String   // número interno, ex.: PO-2026-0001
+  supplierName   String   @map("supplier_name") // futuro: Supplier table
+  supplierCnpj   String?  @map("supplier_cnpj") @db.VarChar(14)
+  description    String
+  amountCents    BigInt   @map("amount_cents")
+  // Soma dos recebimentos; nunca excede amountCents (invariante aplicação).
+  receivedCents  BigInt   @default(0) @map("received_cents")
+  // Soma dos títulos a pagar gerados; nunca excede receivedCents.
+  invoicedCents  BigInt   @default(0) @map("invoiced_cents")
+  currency       String   @default("BRL") @db.VarChar(3)
+  status         PurchaseOrderStatus @default(OPEN)
+  approvalId     String?  @map("approval_id") @db.Uuid
+  createdBy      String   @map("created_by") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  receipts GoodsReceipt[]
+  payables PayableInvoice[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, status])
+  @@map("purchase_orders")
+  @@schema("procurement")
+}
+
+enum PurchaseOrderStatus {
+  OPEN
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CLOSED
+  CANCELLED
+
+  @@schema("procurement")
+}
+
+model GoodsReceipt {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  orderId       String   @map("order_id") @db.Uuid
+  amountCents   BigInt   @map("amount_cents")
+  receivedAt    DateTime @map("received_at")
+  receivedBy    String   @map("received_by") @db.Uuid
+  reference     String?  // NF, romaneio…
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  order PurchaseOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, orderId])
+  @@map("goods_receipts")
+  @@schema("procurement")
+}
+
+// ============================================================================
+// AP — contas a pagar
+// ============================================================================
+
+model PayableInvoice {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  orderId       String?  @map("order_id") @db.Uuid
+  supplierName  String   @map("supplier_name")
+  supplierCnpj  String?  @map("supplier_cnpj") @db.VarChar(14)
+  description   String
+  amountCents   BigInt   @map("amount_cents")
+  paidCents     BigInt   @default(0) @map("paid_cents")
+  currency      String   @default("BRL") @db.VarChar(3)
+  issuedAt      DateTime @default(now()) @map("issued_at")
+  dueDate       DateTime @map("due_date") @db.Date
+  status        PayableStatus @default(OPEN)
+  paymentApprovalId String? @map("payment_approval_id") @db.Uuid
+  paidAt        DateTime? @map("paid_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  order    PurchaseOrder? @relation(fields: [orderId], references: [id])
+  payments PaymentAllocation[]
+
+  @@index([tenantId, status, dueDate])
+  @@map("payable_invoices")
+  @@schema("ap")
+}
+
+enum PayableStatus {
+  OPEN
+  PARTIALLY_PAID
+  PAID
+  CONTESTED
+  CANCELLED
+
+  @@schema("ap")
+}
+
+model Payment {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  idempotencyKey String   @map("idempotency_key")
+  method         PaymentMethod @default(MANUAL)
+  // Status do lado externo (banco). Enviado só vira CONFIRMED com
+  // retorno explícito do banco; UNKNOWN NÃO gera retry cego.
+  externalStatus PaymentExternalStatus @default(CONFIRMED) @map("external_status")
+  paidAt         DateTime @map("paid_at")
+  amountCents    BigInt   @map("amount_cents")
+  currency       String   @default("BRL") @db.VarChar(3)
+  reference      String?
+  createdBy      String   @map("created_by") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  allocations PaymentAllocation[]
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, paidAt])
+  @@map("payments")
+  @@schema("ap")
+}
+
+enum PaymentMethod {
+  MANUAL
+  BANK_API
+  PIX
+  OFX_IMPORT
+
+  @@schema("ap")
+}
+
+enum PaymentExternalStatus {
+  CONFIRMED
+  PROCESSING
+  UNKNOWN
+  REJECTED
+
+  @@schema("ap")
+}
+
+model PaymentAllocation {
+  id          String @id @default(uuid()) @db.Uuid
+  tenantId    String @map("tenant_id") @db.Uuid
+  paymentId   String @map("payment_id") @db.Uuid
+  payableId   String @map("payable_id") @db.Uuid
+  amountCents BigInt @map("amount_cents")
+
+  payment Payment        @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  payable PayableInvoice @relation(fields: [payableId], references: [id])
+
+  @@index([tenantId, payableId])
+  @@index([tenantId, paymentId])
+  @@map("payment_allocations")
+  @@schema("ap")
 }
 
 // ============================================================================

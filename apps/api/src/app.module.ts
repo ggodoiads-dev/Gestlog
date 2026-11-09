@@ -7,7 +7,9 @@ import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { TenantContextMiddleware } from './auth/tenant-context.middleware';
 import { HealthModule } from './health/health.module';
-import { ArModule } from './modules/ar/ar.module';
+import { ApModule } from './modules/ap/ap.module';
+import { ReceivablesModule } from './modules/ar/ar.module';
+import { ProcurementModule } from './modules/procurement/procurement.module';
 import { AutoDispatchModule } from './modules/autodispatch/autodispatch.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { ClientsModule } from './modules/clients/clients.module';
@@ -64,7 +66,9 @@ import { TenantContextModule } from './tenant-context/tenant-context.module';
     OperationsModule,
     AutoDispatchModule,
     BillingModule,
-    ArModule,
+    ReceivablesModule,
+    ProcurementModule,
+    ApModule,
     GovernanceModule,
   ],
   providers: [

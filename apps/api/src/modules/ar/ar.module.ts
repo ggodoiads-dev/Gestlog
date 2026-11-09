@@ -12,4 +12,4 @@ import { ReceivablesService } from './receivables.service';
   providers: [ReceivablesService, ReceiptsService],
   exports: [ReceivablesService, ReceiptsService],
 })
-export class ArModule {}
+export class ReceivablesModule {}

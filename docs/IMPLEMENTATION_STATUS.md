@@ -54,8 +54,8 @@
 | 12 | Billing | `in-progress` | POST /v1/scheduled-trips/:id/validate gera medição conforme Contract.pricingMode (MONTHLY_FIXED/PER_TRIP); unique index parcial garante não-duplicação. GET /v1/billing/pre-invoices/:contractId?year=&month= agrega. |
 | 13 | AR | `in-progress` | Emissão de Receivable + POST /v1/receivables/:id/receipts com Idempotency-Key obrigatório. Alocação 1:1, parcial e total; overpayment → 409; status OPEN → PARTIALLY_PAID → PAID derivado; N:M (rateio entre títulos) e conciliação OFX virão em fatia seguinte. |
 | 24 | Governance / Approvals | `in-progress` | POST /v1/approvals + /decisions com SoD obrigatória (sem autoaprovação), sem aprovação tácita, decisão idempotente por aprovador. REJECT fecha pedido imediatamente; APPROVE só fecha ao atingir `requiredApprovals`. Delegation modelada; endpoints de delegação virão com plantão/alçada. |
-| 14 | Procurement | `not-started` | |
-| 15 | AP | `not-started` | |
+| 14 | Procurement | `in-progress` | POST /v1/purchase-orders + /receipts com overreceive bloqueado; vínculo opcional a ApprovalRequest (APPROVED). Status OPEN → PARTIALLY_RECEIVED → RECEIVED. |
+| 15 | AP | `in-progress` | POST /v1/payables (3-way grosseiro: fatura ≤ recebido) + /payments com Idempotency-Key. **externalStatus=UNKNOWN NÃO atualiza saldo** (§27 prompt); replay dedupe; overpayment → 409. |
 | 16 | Treasury | `not-started` | |
 | 17 | Budget & Performance | `not-started` | |
 | 18 | Finance (DRE/EBITDA) | `not-started` | |
@@ -81,6 +81,8 @@ caso ganha teste automatizado.
 | AT-03 (solicitante não aprova o próprio objeto) | `homologated` | `apps/api/test/governance-approvals.e2e.spec.ts` — requestedBy === approverId → 403 |
 | AT-08 (designação atômica concorrente) | `homologated` | `apps/api/test/autodispatch-concurrency.e2e.spec.ts` — unique index parcial no banco |
 | AT-11 (evento offline enviado duas vezes → 1 fato) | `homologated` | `apps/api/test/driver-events.e2e.spec.ts` — corrida de 5 submissões concorrentes resulta em id único |
+| AT-16 (pedido parcial recebido/faturado/pago não duplica) | `homologated` | `apps/api/test/procurement-ap.e2e.spec.ts` — 12 testes cobrindo overreceive, 3-way grosseiro, overpayment, UNKNOWN sem efeito, replay |
+| AT-17 (status bancário desconhecido não gera retry cego) | `homologated` | mesmo arquivo — UNKNOWN registra fato mas mantém saldo intacto |
 | AT-17 (contrato reajustado preserva histórico) | `in-progress` | versionamento imutável de rotas implementado — AT-17 propriamente dito aguarda `ContractAdjustment` |
 | AT-20 (contrato mensal fixo não gera medição duplicada) | `homologated` | `apps/api/test/billing-measurement.e2e.spec.ts` — unique index parcial por (contract, competência) |
 | AT-35 (rotagrama recorrente estável sem lista diária) | `in-progress` | expansão idempotente validada; publicação de nova versão não reescreve trips passadas — `apps/api/test/routing-versioning.e2e.spec.ts` |
