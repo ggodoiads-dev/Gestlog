@@ -52,7 +52,8 @@ const NAV: NavGroup[] = [
     label: 'Financeiro',
     items: [
       { label: 'Recebíveis', href: '/recebiveis', permission: 'ar.receivables.read' },
-      { label: 'AP / Pagamentos', href: '/ap', soon: true },
+      { label: 'Compras', href: '/compras', permission: 'procurement.orders.read' },
+      { label: 'Pagamentos', href: '/pagamentos', permission: 'ap.payables.read' },
       { label: 'Tesouraria', href: '/tesouraria', soon: true },
       { label: 'DRE / EBITDA', href: '/dre', soon: true },
       { label: 'Orçamento', href: '/orcamento', soon: true },

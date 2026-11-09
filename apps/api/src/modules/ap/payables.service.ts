@@ -216,6 +216,46 @@ export class PayablesService {
     });
   }
 
+  async detail(ctx: { tenantId: string }, id: string) {
+    return this.prisma.withTenantFromCtx(ctx, async (tx) => {
+      const p = await tx.payableInvoice.findUnique({
+        where: { id },
+        include: {
+          order: true,
+          payments: {
+            include: { payment: true },
+            orderBy: { payment: { paidAt: 'desc' } },
+          },
+        },
+      });
+      if (!p) return null;
+      return {
+        id: p.id,
+        orderId: p.orderId,
+        orderCode: p.order?.code ?? null,
+        supplierName: p.supplierName,
+        supplierCnpj: p.supplierCnpj,
+        description: p.description,
+        amountCents: p.amountCents.toString(),
+        paidCents: p.paidCents.toString(),
+        balanceCents: (p.amountCents - p.paidCents).toString(),
+        currency: p.currency,
+        dueDate: p.dueDate.toISOString().slice(0, 10),
+        status: p.status,
+        issuedAt: p.issuedAt.toISOString(),
+        paidAt: p.paidAt ? p.paidAt.toISOString() : null,
+        payments: p.payments.map((a) => ({
+          paymentId: a.paymentId,
+          amountCents: a.amountCents.toString(),
+          method: a.payment.method,
+          externalStatus: a.payment.externalStatus,
+          paidAt: a.payment.paidAt.toISOString(),
+          reference: a.payment.reference,
+        })),
+      };
+    });
+  }
+
   async list(ctx: { tenantId: string }) {
     return this.prisma.withTenantFromCtx(ctx, async (tx) => {
       const rows = await tx.payableInvoice.findMany({

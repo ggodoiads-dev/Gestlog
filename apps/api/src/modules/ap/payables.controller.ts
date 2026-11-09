@@ -6,6 +6,7 @@ import {
   Headers,
   HttpCode,
   HttpStatus,
+  NotFoundException,
   Param,
   Post,
   Req,
@@ -58,6 +59,15 @@ export class PayablesController {
   @ApiOperation({ summary: 'Lista contas a pagar em aberto' })
   async list(@Req() req: Request) {
     return this.service.list(this.requireCtx(req));
+  }
+
+  @Get('payables/:id')
+  @RequirePermissions('ap.payables.read')
+  @ApiOperation({ summary: 'Detalhe do payable + pagamentos alocados' })
+  async detail(@Req() req: Request, @Param('id') id: string) {
+    const found = await this.service.detail(this.requireCtx(req), id);
+    if (!found) throw new NotFoundException('payable não encontrado');
+    return found;
   }
 
   @Post('payables')
