@@ -52,7 +52,7 @@
 | 10 | Operations | `in-progress` | /v1/routes/:id/expand + /v1/scheduled-trips?date. Expansão idempotente; versão imutável: publicação de nova versão não reescreve trips antigas. |
 | 11 | Driver App API | `in-progress` | POST /v1/scheduled-trips/:id/events com Idempotency-Key obrigatório. Dedupe atômico (unique index tenantId+key); TripExecution lazy; estado agregado só avança. |
 | 12 | Billing | `in-progress` | POST /v1/scheduled-trips/:id/validate gera medição conforme Contract.pricingMode (MONTHLY_FIXED/PER_TRIP); unique index parcial garante não-duplicação. GET /v1/billing/pre-invoices/:contractId?year=&month= agrega. |
-| 13 | AR | `not-started` | |
+| 13 | AR | `in-progress` | POST /v1/billing/pre-invoices/:contractId/issue emite Receivable idempotente por (tenant, contract, competência). GET /v1/receivables lista em aberto. Valor é snapshot da pré-fatura no ato da emissão. |
 | 14 | Procurement | `not-started` | |
 | 15 | AP | `not-started` | |
 | 16 | Treasury | `not-started` | |

@@ -130,6 +130,9 @@ const SYSTEM_ROLES: {
       'operations.trips.dispatch',
       'operations.trips.validate',
       'operations.events.submit',
+      'ar.receivables.read',
+      'ar.receivables.issue',
+      'ar.receivables.write',
     ],
   },
   {
