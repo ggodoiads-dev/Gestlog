@@ -9,6 +9,7 @@ import { TenantContextMiddleware } from './auth/tenant-context.middleware';
 import { HealthModule } from './health/health.module';
 import { ApModule } from './modules/ap/ap.module';
 import { ReceivablesModule } from './modules/ar/ar.module';
+import { AuditModule } from './modules/audit/audit.module';
 import { FinanceModule } from './modules/finance/finance.module';
 import { ProcurementModule } from './modules/procurement/procurement.module';
 import { AutoDispatchModule } from './modules/autodispatch/autodispatch.module';
@@ -72,6 +73,7 @@ import { TenantContextModule } from './tenant-context/tenant-context.module';
     ApModule,
     GovernanceModule,
     FinanceModule,
+    AuditModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

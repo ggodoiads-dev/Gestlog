@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
 
 interface CreatePayableInput {
   orderId?: string | undefined;
@@ -44,7 +45,10 @@ interface PayInput {
  */
 @Injectable()
 export class PayablesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async createPayable(
     ctx: { tenantId: string; userId: string },
@@ -199,7 +203,8 @@ export class PayablesService {
       // CRÍTICO (§27 do prompt): só CONFIRMED atualiza o saldo e fecha
       // o título. UNKNOWN/PROCESSING ficam como fatos, não alteram a
       // visão financeira oficial. REJECTED também não altera.
-      if ((input.externalStatus ?? 'CONFIRMED') === 'CONFIRMED') {
+      const externalStatus = input.externalStatus ?? 'CONFIRMED';
+      if (externalStatus === 'CONFIRMED') {
         const newPaid = payable.paidCents + input.amountCents;
         const isFullyPaid = newPaid === payable.amountCents;
         const updated = await tx.payableInvoice.update({
@@ -210,8 +215,35 @@ export class PayablesService {
             ...(isFullyPaid ? { paidAt: input.paidAt } : {}),
           },
         });
+        await this.audit.recordInTx(tx, ctx, {
+          action: 'ap.payable.pay',
+          subjectType: 'PayableInvoice',
+          subjectId: payable.id,
+          before: {
+            status: payable.status,
+            paidCents: payable.paidCents.toString(),
+          },
+          after: {
+            status: updated.status,
+            paidCents: updated.paidCents.toString(),
+            paymentId: payment.id,
+            amountCents: input.amountCents.toString(),
+            externalStatus: 'CONFIRMED',
+          },
+        });
         return this.toResult(payment.id, payment.externalStatus, updated, false);
       }
+      await this.audit.recordInTx(tx, ctx, {
+        action: 'ap.payable.pay.fact',
+        subjectType: 'PayableInvoice',
+        subjectId: payable.id,
+        after: {
+          paymentId: payment.id,
+          amountCents: input.amountCents.toString(),
+          externalStatus,
+          note: 'status não-CONFIRMED não altera saldo',
+        },
+      });
       return this.toResult(payment.id, payment.externalStatus, payable, false);
     });
   }

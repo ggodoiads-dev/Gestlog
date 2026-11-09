@@ -7,6 +7,7 @@ import {
 import type { PrismaClient } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
 
 interface DRE {
   legalEntityId: string;
@@ -64,7 +65,10 @@ interface DRE {
  */
 @Injectable()
 export class FinanceService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async ensurePeriodOpenFromCtx(
     ctx: { tenantId: string },
@@ -271,6 +275,24 @@ export class FinanceService {
         },
       });
 
+      await this.audit.recordInTx(tx, ctx, {
+        action: 'finance.period.close',
+        subjectType: 'AccountingPeriod',
+        subjectId: period.id,
+        subjectVersion: nextVersion,
+        after: {
+          state: 'CLOSED',
+          legalEntityId,
+          year,
+          month,
+          snapshotVersion: nextVersion,
+          revenueCents: live.revenueCents,
+          opexCents: live.opexCents,
+          ebitdaCents: live.ebitdaCents,
+          marginBps: live.marginBps,
+        },
+      });
+
       return this.loadDreInTx(tx, ctx.tenantId, legalEntityId, year, month);
     });
   }
@@ -309,6 +331,14 @@ export class FinanceService {
           reopenedBy: ctx.userId,
           reopenReason: reason.trim(),
         },
+      });
+      await this.audit.recordInTx(tx, ctx, {
+        action: 'finance.period.reopen',
+        subjectType: 'AccountingPeriod',
+        subjectId: period.id,
+        reason: reason.trim(),
+        before: { state: 'CLOSED' },
+        after: { state: 'REOPENED', year, month, legalEntityId },
       });
       return this.loadDreInTx(tx, ctx.tenantId, legalEntityId, year, month);
     });

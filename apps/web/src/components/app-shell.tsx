@@ -63,7 +63,7 @@ const NAV: NavGroup[] = [
     label: 'Governança',
     items: [
       { label: 'Aprovações', href: '/aprovacoes', permission: 'governance.approvals.read' },
-      { label: 'Auditoria', href: '/auditoria', permission: 'core.audit.read', soon: true },
+      { label: 'Auditoria', href: '/auditoria', permission: 'core.audit.read' },
       { label: 'Configurações', href: '/configuracoes', soon: true },
     ],
   },

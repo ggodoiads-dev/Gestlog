@@ -1,6 +1,7 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
 import { ComplianceService } from '../compliance/compliance.service';
 import { DriversService } from '../workforce/drivers.service';
 import type { CreateAssignmentDto } from './autodispatch.dto';
@@ -28,6 +29,7 @@ export class AssignmentsService {
     private readonly prisma: PrismaService,
     private readonly drivers: DriversService,
     private readonly compliance: ComplianceService,
+    private readonly audit: AuditService,
   ) {}
 
   async propose(
@@ -112,6 +114,18 @@ export class AssignmentsService {
           });
         }
 
+        await this.audit.recordInTx(tx, ctx, {
+          action: 'operations.assignment.propose',
+          subjectType: 'Assignment',
+          subjectId: assignment.id,
+          after: {
+            state: assignment.state,
+            scheduledTripId: assignment.scheduledTripId,
+            vehicleId: assignment.vehicleId,
+            driverId: assignment.driverId,
+          },
+        });
+
         return {
           id: assignment.id,
           state: assignment.state,
@@ -153,6 +167,15 @@ export class AssignmentsService {
           reason,
           version: { increment: 1 },
         },
+      });
+      await this.audit.recordInTx(tx, ctx, {
+        action: 'operations.assignment.cancel',
+        subjectType: 'Assignment',
+        subjectId: updated.id,
+        subjectVersion: updated.version,
+        reason,
+        before: { state: current.state },
+        after: { state: 'CANCELLED' },
       });
       return { id: updated.id, state: updated.state };
     });

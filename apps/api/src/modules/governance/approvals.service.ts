@@ -8,6 +8,7 @@ import {
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
 import type { CreateApprovalDto, DecisionDto } from './governance.dto';
 
 interface ApprovalView {
@@ -58,7 +59,10 @@ interface ApprovalView {
  */
 @Injectable()
 export class ApprovalsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async create(
     ctx: { tenantId: string; userId: string },
@@ -155,6 +159,15 @@ export class ApprovalsService {
           });
         }
       }
+
+      await this.audit.recordInTx(tx, ctx, {
+        action: `governance.decide.${dto.decision.toLowerCase()}`,
+        subjectType: 'ApprovalRequest',
+        subjectId: requestId,
+        ...(dto.comment !== undefined ? { reason: dto.comment } : {}),
+        before: { state: req.state },
+        after: { decision: dto.decision, approverId: ctx.userId },
+      });
 
       return this.load(tx, requestId);
     });
