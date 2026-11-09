@@ -13,6 +13,7 @@ import { AuditModule } from './modules/audit/audit.module';
 import { FinanceModule } from './modules/finance/finance.module';
 import { TreasuryModule } from './modules/treasury/treasury.module';
 import { FuelModule } from './modules/fuel/fuel.module';
+import { AssetsModule } from './modules/assets/assets.module';
 import { ProcurementModule } from './modules/procurement/procurement.module';
 import { AutoDispatchModule } from './modules/autodispatch/autodispatch.module';
 import { BillingModule } from './modules/billing/billing.module';
@@ -77,6 +78,7 @@ import { TenantContextModule } from './tenant-context/tenant-context.module';
     FinanceModule,
     TreasuryModule,
     FuelModule,
+    AssetsModule,
     AuditModule,
   ],
   providers: [

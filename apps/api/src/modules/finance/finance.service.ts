@@ -454,14 +454,26 @@ export class FinanceService {
     });
     const revenueCents = measurementRows.reduce((acc, m) => acc + m.amountCents, 0n);
 
-    // Opex: payables com issuedAt na competência (iteração 1 — consolidado
-    // por tenant; separação por LegalEntity vem com GL completo).
+    // AT-29: EBITDA só conta OPEX. CAPEX, FINANCIAL_INTEREST,
+    // FINANCIAL_PRINCIPAL e TAX_INCOME entram no DRE abaixo da linha
+    // de EBITDA (ou não entram, no caso de CAPEX e amortização). Aqui
+    // só opex sobe para o cálculo.
     const monthStart = new Date(Date.UTC(year, month - 1, 1));
     const monthEnd = new Date(Date.UTC(year, month, 1));
     const payableRows = await tx.payableInvoice.findMany({
       where: {
         issuedAt: { gte: monthStart, lt: monthEnd },
         status: { not: 'CANCELLED' },
+        classification: {
+          in: [
+            'OPEX_FUEL',
+            'OPEX_MAINTENANCE',
+            'OPEX_PAYROLL',
+            'OPEX_SERVICES',
+            'OPEX_INSURANCE',
+            'OPEX_OTHER',
+          ],
+        },
       },
       select: { amountCents: true },
     });
@@ -477,7 +489,8 @@ export class FinanceService {
   }
 
   private validateYearMonth(year: number, month: number): void {
-    if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+    // Range amplo para suportar testes com competências futuras.
+    if (!Number.isInteger(year) || year < 2000 || year > 2500) {
       throw new BadRequestException('ano inválido');
     }
     if (!Number.isInteger(month) || month < 1 || month > 12) {

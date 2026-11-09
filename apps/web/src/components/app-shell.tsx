@@ -55,6 +55,7 @@ const NAV: NavGroup[] = [
       { label: 'Compras', href: '/compras', permission: 'procurement.orders.read' },
       { label: 'Pagamentos', href: '/pagamentos', permission: 'ap.payables.read' },
       { label: 'Tesouraria', href: '/tesouraria', permission: 'finance.bank.read' },
+      { label: 'Ativos', href: '/ativos', permission: 'assets.read' },
       { label: 'DRE / EBITDA', href: '/dre', permission: 'finance.periods.read' },
       { label: 'Orçamento', href: '/orcamento', soon: true },
     ],

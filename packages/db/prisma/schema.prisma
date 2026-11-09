@@ -11,7 +11,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  schemas  = ["core", "clients", "clm", "routing", "workforce", "fleet", "operations", "billing", "ar", "procurement", "ap", "governance", "finance", "fuel", "audit"]
+  schemas  = ["core", "clients", "clm", "routing", "workforce", "fleet", "operations", "billing", "ar", "procurement", "ap", "governance", "finance", "fuel", "assets", "audit"]
 }
 
 // ============================================================================
@@ -967,6 +967,12 @@ model PayableInvoice {
   status        PayableStatus @default(OPEN)
   paymentApprovalId String? @map("payment_approval_id") @db.Uuid
   paidAt        DateTime? @map("paid_at")
+  // AT-29 e AT-32: classificação separa o que entra em EBITDA (OPEX_*)
+  // do que não entra (CAPEX, FINANCIAL_INTEREST, FINANCIAL_PRINCIPAL,
+  // TAX_INCOME). Default OPEX_OTHER preserva comportamento legado.
+  classification PayableClassification @default(OPEX_OTHER)
+  // Quando CAPEX, o payable pode estar ligado a um FixedAsset.
+  capitalizedAssetId String? @map("capitalized_asset_id") @db.Uuid
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
@@ -974,7 +980,23 @@ model PayableInvoice {
   payments PaymentAllocation[]
 
   @@index([tenantId, status, dueDate])
+  @@index([tenantId, classification, issuedAt])
   @@map("payable_invoices")
+  @@schema("ap")
+}
+
+enum PayableClassification {
+  OPEX_FUEL
+  OPEX_MAINTENANCE
+  OPEX_PAYROLL
+  OPEX_SERVICES
+  OPEX_INSURANCE
+  OPEX_OTHER
+  CAPEX              // vira ativo imobilizado, não entra em EBITDA
+  FINANCIAL_INTEREST // juros de financiamento, abaixo de EBITDA
+  FINANCIAL_PRINCIPAL // amortização de principal, não é despesa
+  TAX_INCOME         // IR, não entra em EBITDA
+
   @@schema("ap")
 }
 
@@ -1204,6 +1226,178 @@ enum BankTxnState {
   IGNORED  // decisão explícita de não conciliar (tarifa, estorno, etc)
 
   @@schema("finance")
+}
+
+// ============================================================================
+// ASSETS — ativo imobilizado, depreciação, revisão de vida útil
+// (prompt mestre §26) · AT-29, AT-30, AT-31, AT-32
+// ============================================================================
+
+model FixedAsset {
+  id                 String   @id @default(uuid()) @db.Uuid
+  tenantId           String   @map("tenant_id") @db.Uuid
+  legalEntityId      String   @map("legal_entity_id") @db.Uuid
+  code               String
+  name               String
+  category           AssetCategory
+  // Valor contábil original.
+  acquisitionCostCents BigInt @map("acquisition_cost_cents")
+  acquisitionDate    DateTime @map("acquisition_date") @db.Date
+  // Valor residual estimado ao final da vida útil.
+  residualCents      BigInt   @default(0) @map("residual_cents")
+  // Em meses. AT-31: alterações via AssetLifeReview.
+  usefulLifeMonths   Int      @map("useful_life_months")
+  // Depreciação acumulada até a data de reconhecimento.
+  openingAccumulatedCents BigInt @default(0) @map("opening_accumulated_cents")
+  // Vínculo opcional a Vehicle (para asset-vehicle 1:1 quando aplicável).
+  vehicleId          String?  @map("vehicle_id") @db.Uuid
+  status             AssetStatus @default(ACTIVE)
+  disposedAt         DateTime? @map("disposed_at")
+  disposalReason     String?   @map("disposal_reason")
+  disposalProceedsCents BigInt? @map("disposal_proceeds_cents")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  financings    AssetFinancing[]
+  depreciations DepreciationEntry[]
+  lifeReviews   AssetLifeReview[]
+  disposals     AssetDisposal[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, legalEntityId, status])
+  @@map("fixed_assets")
+  @@schema("assets")
+}
+
+enum AssetCategory {
+  VEHICLE
+  EQUIPMENT
+  IT_HARDWARE
+  REAL_ESTATE
+  FURNITURE
+  OTHER
+
+  @@schema("assets")
+}
+
+enum AssetStatus {
+  ACTIVE
+  DISPOSED
+  WRITE_OFF
+
+  @@schema("assets")
+}
+
+model AssetFinancing {
+  id               String   @id @default(uuid()) @db.Uuid
+  tenantId         String   @map("tenant_id") @db.Uuid
+  assetId          String   @map("asset_id") @db.Uuid
+  creditorName     String   @map("creditor_name")
+  creditorCnpj     String?  @map("creditor_cnpj") @db.VarChar(14)
+  contractNumber   String?  @map("contract_number")
+  originalPrincipalCents BigInt @map("original_principal_cents")
+  outstandingPrincipalCents BigInt @map("outstanding_principal_cents")
+  interestRateBps  Int      @map("interest_rate_bps") // 100 bps = 1% a.a.
+  termMonths       Int      @map("term_months")
+  startDate        DateTime @map("start_date") @db.Date
+  status           FinancingStatus @default(ACTIVE)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  asset FixedAsset @relation(fields: [assetId], references: [id])
+
+  @@index([tenantId, assetId, status])
+  @@map("financings")
+  @@schema("assets")
+}
+
+enum FinancingStatus {
+  ACTIVE
+  PAID_OFF
+  DEFAULTED
+
+  @@schema("assets")
+}
+
+// Um lançamento por asset × competência. Imutável depois de POSTED
+// (igual a EBITDASnapshot).
+model DepreciationEntry {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  assetId      String   @map("asset_id") @db.Uuid
+  year         Int
+  month        Int
+  amountCents  BigInt   @map("amount_cents")
+  accumulatedCents BigInt @map("accumulated_cents")
+  // Qual revisão de vida útil estava em vigor quando foi calculado.
+  usefulLifeMonthsAtCalc Int @map("useful_life_months_at_calc")
+  state        DepreciationState @default(COMPUTED)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  asset FixedAsset @relation(fields: [assetId], references: [id])
+
+  @@unique([tenantId, assetId, year, month])
+  @@index([tenantId, year, month])
+  @@map("depreciation_entries")
+  @@schema("assets")
+}
+
+enum DepreciationState {
+  COMPUTED
+  POSTED // competência fechada; não altera mais
+
+  @@schema("assets")
+}
+
+// AT-31: revisão de vida útil. Depreciação anterior a effectiveFrom usa
+// o old; a partir de effectiveFrom usa o new. Nunca recalcula o passado.
+model AssetLifeReview {
+  id               String   @id @default(uuid()) @db.Uuid
+  tenantId         String   @map("tenant_id") @db.Uuid
+  assetId          String   @map("asset_id") @db.Uuid
+  oldUsefulLifeMonths Int   @map("old_useful_life_months")
+  newUsefulLifeMonths Int   @map("new_useful_life_months")
+  effectiveFrom    DateTime @map("effective_from") @db.Date
+  reason           String
+  decidedBy        String   @map("decided_by") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  asset FixedAsset @relation(fields: [assetId], references: [id])
+
+  @@index([tenantId, assetId, effectiveFrom])
+  @@map("life_reviews")
+  @@schema("assets")
+}
+
+// AT-30: venda (ou write-off) do ativo. Requer consentimento do credor
+// se houver financiamento ativo.
+model AssetDisposal {
+  id                String   @id @default(uuid()) @db.Uuid
+  tenantId          String   @map("tenant_id") @db.Uuid
+  assetId           String   @map("asset_id") @db.Uuid
+  disposalKind      DisposalKind @map("disposal_kind")
+  proceedsCents     BigInt?  @map("proceeds_cents")
+  disposedAt        DateTime @map("disposed_at")
+  // AT-30: quando o ativo é financiado, o credor precisa consentir.
+  creditorConsentAt DateTime? @map("creditor_consent_at")
+  creditorConsentDoc String?  @map("creditor_consent_doc")
+  reason            String?
+  createdBy         String   @map("created_by") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  asset FixedAsset @relation(fields: [assetId], references: [id])
+
+  @@index([tenantId, assetId])
+  @@map("disposals")
+  @@schema("assets")
+}
+
+enum DisposalKind {
+  SALE
+  SCRAP
+  TOTAL_LOSS
+
+  @@schema("assets")
 }
 
 // ============================================================================
