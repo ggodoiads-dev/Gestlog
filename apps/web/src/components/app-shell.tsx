@@ -45,14 +45,13 @@ const NAV: NavGroup[] = [
     label: 'Comercial',
     items: [
       { label: 'Clientes', href: '/clientes', permission: 'clients.read' },
-      { label: 'Contratos', href: '/contratos', permission: 'clm.contracts.read', soon: true },
+      { label: 'Contratos', href: '/contratos', permission: 'clm.contracts.read' },
     ],
   },
   {
     label: 'Financeiro',
     items: [
-      { label: 'Faturamento', href: '/faturamento', soon: true },
-      { label: 'AR / Recebíveis', href: '/ar', soon: true },
+      { label: 'Recebíveis', href: '/recebiveis', permission: 'ar.receivables.read' },
       { label: 'AP / Pagamentos', href: '/ap', soon: true },
       { label: 'Tesouraria', href: '/tesouraria', soon: true },
       { label: 'DRE / EBITDA', href: '/dre', soon: true },

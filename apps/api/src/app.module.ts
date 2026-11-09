@@ -11,6 +11,7 @@ import { ArModule } from './modules/ar/ar.module';
 import { AutoDispatchModule } from './modules/autodispatch/autodispatch.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { ClientsModule } from './modules/clients/clients.module';
+import { ClmModule } from './modules/clm/clm.module';
 import { CoreModule } from './modules/core/core.module';
 import { FleetModule } from './modules/fleet/fleet.module';
 import { OperationsModule } from './modules/operations/operations.module';
@@ -55,6 +56,7 @@ import { TenantContextModule } from './tenant-context/tenant-context.module';
     HealthModule,
     CoreModule,
     ClientsModule,
+    ClmModule,
     RoutingModule,
     FleetModule,
     WorkforceModule,
