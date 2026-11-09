@@ -6,10 +6,30 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
+import crypto from 'node:crypto';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import type { CreateApprovalDto, DecisionDto } from './governance.dto';
+
+/**
+ * Serialização canônica de um objeto para comparação por hash. Ordena as
+ * chaves em todos os níveis para que `{a:1,b:2}` == `{b:2,a:1}`.
+ */
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  const keys = Object.keys(value as Record<string, unknown>).sort();
+  const parts = keys.map(
+    (k) => `${JSON.stringify(k)}:${canonicalJson((value as Record<string, unknown>)[k])}`,
+  );
+  return `{${parts.join(',')}}`;
+}
+
+function sha256(s: string): string {
+  return crypto.createHash('sha256').update(s).digest('hex');
+}
 
 interface ApprovalView {
   id: string;
@@ -64,6 +84,46 @@ export class ApprovalsService {
     private readonly audit: AuditService,
   ) {}
 
+  /**
+   * Devolve o snapshot canônico atual do subject para checagem AT-04.
+   * Suporta hoje PayableInvoice e Receivable; outros tipos devolvem null
+   * (check é pulado). O resolver cresce com o produto.
+   */
+  private async currentSubjectSnapshot(
+    tx: PrismaClient,
+    subjectType: string,
+    subjectId: string,
+  ): Promise<Record<string, unknown> | null> {
+    switch (subjectType) {
+      case 'payable_invoice': {
+        const p = await tx.payableInvoice.findUnique({ where: { id: subjectId } });
+        if (!p) return null;
+        return {
+          amountCents: p.amountCents.toString(),
+          supplierName: p.supplierName,
+          supplierCnpj: p.supplierCnpj ?? null,
+          description: p.description,
+          dueDate: p.dueDate.toISOString().slice(0, 10),
+          classification: p.classification,
+        };
+      }
+      case 'receivable': {
+        const r = await tx.receivable.findUnique({ where: { id: subjectId } });
+        if (!r) return null;
+        return {
+          amountCents: r.amountCents.toString(),
+          contractId: r.contractId,
+          clientId: r.clientId,
+          competenceYear: r.competenceYear,
+          competenceMonth: r.competenceMonth,
+          dueDate: r.dueDate.toISOString().slice(0, 10),
+        };
+      }
+      default:
+        return null;
+    }
+  }
+
   async create(
     ctx: { tenantId: string; userId: string },
     dto: CreateApprovalDto,
@@ -110,6 +170,31 @@ export class ApprovalsService {
         throw new ForbiddenException(
           'autoaprovação proibida — solicitante não pode decidir seu próprio pedido',
         );
+      }
+
+      // AT-04: mudança material no subject invalida a decisão em curso.
+      // Comparamos o hash canônico do snapshot armazenado com o snapshot
+      // atual do subject. Se o chamador tenta aprovar, rejeitamos; RETURN
+      // e REJECT seguem (o aprovador tem o direito de barrar).
+      if (dto.decision === 'APPROVE') {
+        const currentSnapshot = await this.currentSubjectSnapshot(
+          tx,
+          req.subjectType,
+          req.subjectId,
+        );
+        if (currentSnapshot !== null) {
+          const savedHash = sha256(canonicalJson(req.snapshotJson));
+          const currentHash = sha256(canonicalJson(currentSnapshot));
+          if (savedHash !== currentHash) {
+            throw new ConflictException({
+              message:
+                'subject mudou materialmente desde o pedido — crie novo pedido com snapshot atualizado',
+              code: 'MATERIAL_CHANGED',
+              subjectType: req.subjectType,
+              subjectId: req.subjectId,
+            });
+          }
+        }
       }
 
       // Já decidiu antes? unique constraint protege, mas damos erro claro.
