@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
 import { Badge, DemoBanner } from '@gestlog/ui';
@@ -13,6 +14,8 @@ interface ReceivableRow {
   clientId: string;
   competence: string;
   amountCents: string;
+  paidCents: string;
+  balanceCents: string;
   currency: string;
   dueDate: string;
   status: 'OPEN' | 'PARTIALLY_PAID' | 'PAID' | 'CONTESTED' | 'WRITTEN_OFF';
@@ -42,9 +45,11 @@ export default async function RecebiveisPage(): Promise<React.ReactElement> {
     apiFetch<{ tenant: { name: string } }>('/v1/me'),
   ]);
 
-  const totalOpenCents = items.reduce((acc, r) => acc + BigInt(r.amountCents), 0n);
+  // Soma apenas o SALDO (balance), não o valor emitido, para refletir
+  // pagamentos parciais já recebidos.
+  const totalOpenCents = items.reduce((acc, r) => acc + BigInt(r.balanceCents), 0n);
   const overdue = items.filter((r) => daysToDue(r.dueDate) < 0);
-  const overdueCents = overdue.reduce((acc, r) => acc + BigInt(r.amountCents), 0n);
+  const overdueCents = overdue.reduce((acc, r) => acc + BigInt(r.balanceCents), 0n);
 
   return (
     <AppShell session={session} tenantName={me.tenant.name} activePath="/recebiveis">
@@ -109,22 +114,35 @@ export default async function RecebiveisPage(): Promise<React.ReactElement> {
                 <tr className="border-b border-surface-200 text-left text-[11px] uppercase tracking-wider text-ink-500 dark:border-navy-700">
                   <th className="px-4 py-2.5">Competência</th>
                   <th className="px-4 py-2.5 text-right">Valor</th>
+                  <th className="px-4 py-2.5 text-right">Saldo</th>
                   <th className="px-4 py-2.5">Vencimento</th>
                   <th className="px-4 py-2.5">Em</th>
                   <th className="px-4 py-2.5">Status</th>
+                  <th className="px-4 py-2.5" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-surface-200 dark:divide-navy-700">
                 {items.map((r) => {
                   const days = daysToDue(r.dueDate);
                   const isOverdue = days < 0;
+                  const hasPaid = r.paidCents !== '0';
                   return (
-                    <tr key={r.id}>
+                    <tr key={r.id} className="hover:bg-surface-100/50 dark:hover:bg-navy-800/50">
                       <td className="px-4 py-2.5 font-mono text-xs tabular-nums text-ink-900 dark:text-white">
                         {formatCompetence(r.competence)}
                       </td>
-                      <td className="px-4 py-2.5 text-right font-mono tabular-nums text-ink-900 dark:text-white">
+                      <td className="px-4 py-2.5 text-right font-mono tabular-nums text-ink-700 dark:text-white/90">
                         {formatCents(r.amountCents, r.currency)}
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <span className="font-mono tabular-nums text-ink-900 dark:text-white">
+                          {formatCents(r.balanceCents, r.currency)}
+                        </span>
+                        {hasPaid ? (
+                          <span className="ml-1 text-[10px] text-ink-500">
+                            (parcial)
+                          </span>
+                        ) : null}
                       </td>
                       <td className="px-4 py-2.5 font-mono text-xs tabular-nums text-ink-500">
                         {formatIsoDate(r.dueDate)}
@@ -140,6 +158,14 @@ export default async function RecebiveisPage(): Promise<React.ReactElement> {
                         <Badge tone={STATUS_TONE[r.status] ?? 'neutral'}>
                           {r.status.toLowerCase().replace('_', ' ')}
                         </Badge>
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <Link
+                          href={`/recebiveis/${r.id}`}
+                          className="text-xs font-medium text-accent hover:underline"
+                        >
+                          abrir
+                        </Link>
                       </td>
                     </tr>
                   );

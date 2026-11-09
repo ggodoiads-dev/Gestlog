@@ -137,6 +137,8 @@ export class ReceivablesService {
       clientId: string;
       competence: string;
       amountCents: string;
+      paidCents: string;
+      balanceCents: string;
       currency: string;
       dueDate: string;
       status: string;
@@ -154,9 +156,78 @@ export class ReceivablesService {
           clientId: r.clientId,
           competence: `${r.competenceYear}-${String(r.competenceMonth).padStart(2, '0')}`,
           amountCents: r.amountCents.toString(),
+          paidCents: r.paidCents.toString(),
+          balanceCents: (r.amountCents - r.paidCents).toString(),
           currency: r.currency,
           dueDate: r.dueDate.toISOString().slice(0, 10),
           status: r.status,
+        })),
+      };
+    });
+  }
+
+  async detail(
+    ctx: { tenantId: string },
+    id: string,
+  ): Promise<{
+    id: string;
+    contractId: string;
+    contractCode: string;
+    clientId: string;
+    clientName: string;
+    competence: string;
+    amountCents: string;
+    paidCents: string;
+    balanceCents: string;
+    currency: string;
+    status: string;
+    dueDate: string;
+    issuedAt: string;
+    paidAt: string | null;
+    allocations: {
+      receiptId: string;
+      amountCents: string;
+      receivedAt: string;
+      source: string;
+      reference: string | null;
+    }[];
+  } | null> {
+    return this.prisma.withTenantFromCtx(ctx, async (tx) => {
+      const r = await tx.receivable.findUnique({
+        where: { id },
+        include: {
+          allocations: {
+            include: { receipt: true },
+            orderBy: { receipt: { receivedAt: 'desc' } },
+          },
+        },
+      });
+      if (!r) return null;
+      const contract = await tx.contract.findUnique({
+        where: { id: r.contractId },
+        include: { client: true },
+      });
+      return {
+        id: r.id,
+        contractId: r.contractId,
+        contractCode: contract?.code ?? '?',
+        clientId: r.clientId,
+        clientName: contract?.client.legalName ?? '?',
+        competence: `${r.competenceYear}-${String(r.competenceMonth).padStart(2, '0')}`,
+        amountCents: r.amountCents.toString(),
+        paidCents: r.paidCents.toString(),
+        balanceCents: (r.amountCents - r.paidCents).toString(),
+        currency: r.currency,
+        status: r.status,
+        dueDate: r.dueDate.toISOString().slice(0, 10),
+        issuedAt: r.issuedAt.toISOString(),
+        paidAt: r.paidAt ? r.paidAt.toISOString() : null,
+        allocations: r.allocations.map((a) => ({
+          receiptId: a.receiptId,
+          amountCents: a.amountCents.toString(),
+          receivedAt: a.receipt.receivedAt.toISOString(),
+          source: a.receipt.source,
+          reference: a.receipt.reference,
         })),
       };
     });

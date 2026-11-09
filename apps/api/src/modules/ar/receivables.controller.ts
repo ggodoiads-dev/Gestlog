@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  NotFoundException,
   Param,
   Post,
   Req,
@@ -69,5 +70,14 @@ export class ReceivablesController {
   @ApiOperation({ summary: 'Lista recebíveis em aberto do tenant' })
   async listOpen(@Req() req: Request) {
     return this.service.listOpen(this.requireCtx(req));
+  }
+
+  @Get('receivables/:id')
+  @RequirePermissions('ar.receivables.read')
+  @ApiOperation({ summary: 'Detalhe do recebível + histórico de alocações' })
+  async detail(@Req() req: Request, @Param('id') id: string) {
+    const r = await this.service.detail(this.requireCtx(req), id);
+    if (!r) throw new NotFoundException('recebível não encontrado');
+    return r;
   }
 }
