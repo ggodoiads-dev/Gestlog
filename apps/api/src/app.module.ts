@@ -11,6 +11,7 @@ import { ApModule } from './modules/ap/ap.module';
 import { ReceivablesModule } from './modules/ar/ar.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { FinanceModule } from './modules/finance/finance.module';
+import { TreasuryModule } from './modules/treasury/treasury.module';
 import { ProcurementModule } from './modules/procurement/procurement.module';
 import { AutoDispatchModule } from './modules/autodispatch/autodispatch.module';
 import { BillingModule } from './modules/billing/billing.module';
@@ -73,6 +74,7 @@ import { TenantContextModule } from './tenant-context/tenant-context.module';
     ApModule,
     GovernanceModule,
     FinanceModule,
+    TreasuryModule,
     AuditModule,
   ],
   providers: [

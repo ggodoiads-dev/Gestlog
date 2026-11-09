@@ -1111,6 +1111,102 @@ model EBITDASnapshot {
 }
 
 // ============================================================================
+// TREASURY — contas bancárias, extratos, reconciliação Receipt/Payment
+// (prompt mestre §22) · AT-18, AT-19, AT-25
+// ============================================================================
+
+model BankAccount {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  legalEntityId  String   @map("legal_entity_id") @db.Uuid
+  bankCode       String   @map("bank_code") // "001", "341", "237"...
+  branch         String
+  accountNumber  String   @map("account_number")
+  alias          String
+  currency       String   @default("BRL")
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  statements   BankStatement[]
+  transactions BankTransaction[]
+
+  @@unique([tenantId, bankCode, branch, accountNumber])
+  @@index([tenantId, legalEntityId])
+  @@map("bank_accounts")
+  @@schema("finance")
+}
+
+// Um batch de importação. Cada movimento vem com externalId único POR
+// conta; mesma importação rodada 2x → mesma transaction (upsert). OFX e
+// API retornam o mesmo id do banco, então batem naturalmente. AT-18.
+model BankStatement {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  bankAccountId  String   @map("bank_account_id") @db.Uuid
+  source         String   // "ofx" | "api" | "manual"
+  periodStart    DateTime @map("period_start")
+  periodEnd      DateTime @map("period_end")
+  openingBalanceCents BigInt @map("opening_balance_cents")
+  closingBalanceCents BigInt @map("closing_balance_cents")
+  importedBy     String   @map("imported_by") @db.Uuid
+  importedAt     DateTime @default(now()) @map("imported_at")
+
+  bankAccount  BankAccount @relation(fields: [bankAccountId], references: [id])
+  transactions BankTransaction[]
+
+  @@index([tenantId, bankAccountId, periodStart])
+  @@map("bank_statements")
+  @@schema("finance")
+}
+
+model BankTransaction {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  bankAccountId   String   @map("bank_account_id") @db.Uuid
+  statementId     String?  @map("statement_id") @db.Uuid
+  externalId      String   @map("external_id") // id do banco (OFX FITID ou API id)
+  postedAt        DateTime @map("posted_at")
+  kind            BankTxnKind
+  amountCents     BigInt   @map("amount_cents") // sempre positivo; sinal é no kind
+  description     String
+  counterpartName String?  @map("counterpart_name")
+  counterpartDoc  String?  @map("counterpart_doc")
+  state           BankTxnState @default(PENDING)
+  // Matching: aponta para 1 receipt OU 1 payment. Nunca ambos.
+  matchedReceiptId String? @map("matched_receipt_id") @db.Uuid
+  matchedPaymentId String? @map("matched_payment_id") @db.Uuid
+  matchedAt       DateTime? @map("matched_at")
+  matchedBy       String?  @map("matched_by") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  bankAccount BankAccount    @relation(fields: [bankAccountId], references: [id])
+  statement   BankStatement? @relation(fields: [statementId], references: [id])
+
+  @@unique([tenantId, bankAccountId, externalId])
+  @@index([tenantId, bankAccountId, postedAt])
+  @@index([tenantId, state])
+  @@map("bank_transactions")
+  @@schema("finance")
+}
+
+enum BankTxnKind {
+  CREDIT // entrada — conciliar com Receipt
+  DEBIT  // saída — conciliar com Payment
+
+  @@schema("finance")
+}
+
+enum BankTxnState {
+  PENDING  // aguardando conciliação
+  MATCHED  // casado a Receipt ou Payment
+  IGNORED  // decisão explícita de não conciliar (tarifa, estorno, etc)
+
+  @@schema("finance")
+}
+
+// ============================================================================
 // GOVERNANCE — aprovações, delegações, alçadas (prompt mestre §15)
 // ============================================================================
 
