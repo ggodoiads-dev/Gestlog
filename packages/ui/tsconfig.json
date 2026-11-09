@@ -1,0 +1,11 @@
+{
+  "extends": "@gestlog/config/tsconfig/base",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "lib": ["dom", "dom.iterable", "ES2022"],
+    "moduleResolution": "Bundler",
+    "outDir": "dist",
+    "rootDir": "."
+  },
+  "include": ["src/**/*", "tailwind-preset.ts"]
+}

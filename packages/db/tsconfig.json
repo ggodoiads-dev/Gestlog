@@ -1,0 +1,10 @@
+{
+  "extends": "@gestlog/config/tsconfig/node",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "outDir": "dist",
+    "rootDir": "."
+  },
+  "include": ["src/**/*", "prisma/**/*.ts"]
+}

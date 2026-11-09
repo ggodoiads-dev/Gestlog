@@ -1,0 +1,787 @@
+// GESTLOG — schema Prisma
+// A geração deste arquivo está documentada em docs/DOMAIN_MODEL.md.
+// Toda tabela multi-tenant carrega `tenantId` e tem política RLS criada
+// via migration SQL (packages/db/prisma/migrations/.../rls.sql).
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["core", "clients", "clm", "routing", "workforce", "fleet", "operations", "audit"]
+}
+
+// ============================================================================
+// CORE — tenant, pessoas jurídicas, garagens, usuários, perfis, auditoria
+// ============================================================================
+
+model Tenant {
+  id          String   @id @default(uuid()) @db.Uuid
+  slug        String   @unique
+  name        String
+  status      TenantStatus @default(ACTIVE)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  legalEntities LegalEntity[]
+  users         User[]
+  clients       Client[]
+  vehicles      Vehicle[]
+  drivers       Driver[]
+  routes        Route[]
+  trips         ScheduledTrip[]
+
+  @@map("tenants")
+  @@schema("core")
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  TERMINATED
+
+  @@schema("core")
+}
+
+model LegalEntity {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  cnpj       String   @db.VarChar(14)
+  tradeName  String   @map("trade_name")
+  legalName  String   @map("legal_name")
+  taxRegime  TaxRegime? @map("tax_regime")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  garages    Garage[]
+  contracts  Contract[]
+
+  @@unique([tenantId, cnpj])
+  @@index([tenantId])
+  @@map("legal_entities")
+  @@schema("core")
+}
+
+enum TaxRegime {
+  SIMPLES_NACIONAL
+  LUCRO_PRESUMIDO
+  LUCRO_REAL
+
+  @@schema("core")
+}
+
+model Garage {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  legalEntityId  String   @map("legal_entity_id") @db.Uuid
+  name           String
+  address        String?
+  latitude       Decimal? @db.Decimal(10, 7)
+  longitude      Decimal? @db.Decimal(10, 7)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  legalEntity    LegalEntity @relation(fields: [legalEntityId], references: [id])
+  vehicles       Vehicle[]
+
+  @@index([tenantId])
+  @@index([legalEntityId])
+  @@map("garages")
+  @@schema("core")
+}
+
+model User {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  email       String
+  fullName    String   @map("full_name")
+  passwordHash String? @map("password_hash")
+  status      UserStatus @default(ACTIVE)
+  mfaEnabled  Boolean  @default(false) @map("mfa_enabled")
+  lastLoginAt DateTime? @map("last_login_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  roles       UserRole[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@map("users")
+  @@schema("core")
+}
+
+enum UserStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+  DEACTIVATED
+
+  @@schema("core")
+}
+
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String?  @map("tenant_id") @db.Uuid // null = role global do SaaS (seed)
+  code        String   // ex.: "operation_manager", "finance_approver"
+  name        String
+  description String?
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  userRoles   UserRole[]
+  rolePermissions RolePermission[]
+
+  @@unique([tenantId, code])
+  @@map("roles")
+  @@schema("core")
+}
+
+model Permission {
+  id       String @id @default(uuid()) @db.Uuid
+  code     String @unique // ex.: "contracts.approve", "payments.execute"
+  moduleCode String @map("module_code")
+  description String?
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+  @@schema("core")
+}
+
+model RolePermission {
+  roleId       String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+
+  role       Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+  @@schema("core")
+}
+
+model UserRole {
+  id         String @id @default(uuid()) @db.Uuid
+  tenantId   String @map("tenant_id") @db.Uuid
+  userId     String @map("user_id") @db.Uuid
+  roleId     String @map("role_id") @db.Uuid
+  // Escopo opcional do papel (uma mesma pessoa pode ser dispatcher em uma garagem e auditor em outra).
+  legalEntityId String? @map("legal_entity_id") @db.Uuid
+  garageId   String? @map("garage_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId, legalEntityId, garageId])
+  @@index([tenantId])
+  @@map("user_roles")
+  @@schema("core")
+}
+
+// ----- Auditoria append-only -----
+
+model AuditEvent {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String?  @map("tenant_id") @db.Uuid // null = evento plataforma
+  actorUserId   String?  @map("actor_user_id") @db.Uuid
+  actedAsUserId String?  @map("acted_as_user_id") @db.Uuid
+  correlationId String?  @map("correlation_id") @db.Uuid
+  action        String
+  subjectType   String   @map("subject_type")
+  subjectId     String   @map("subject_id") @db.Uuid
+  subjectVersion Int?    @map("subject_version")
+  reason        String?
+  before        Json?
+  after         Json?
+  ip            String?
+  userAgent     String?  @map("user_agent")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, createdAt])
+  @@index([subjectType, subjectId])
+  @@map("audit_events")
+  @@schema("audit")
+}
+
+// ----- Documentos -----
+
+model Document {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  storageKey  String   @map("storage_key")
+  sha256      String
+  mimeType    String   @map("mime_type")
+  sizeBytes   Int      @map("size_bytes")
+  originalName String  @map("original_name")
+  uploadedBy  String?  @map("uploaded_by") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@map("documents")
+  @@schema("core")
+}
+
+// ============================================================================
+// CLIENTS — clientes corporativos
+// ============================================================================
+
+model Client {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  legalName  String   @map("legal_name")
+  tradeName  String?  @map("trade_name")
+  cnpj       String?  @db.VarChar(14)
+  economicGroup String? @map("economic_group")
+  status     ClientStatus @default(ACTIVE)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  units     ClientUnit[]
+  contracts Contract[]
+
+  @@unique([tenantId, cnpj])
+  @@index([tenantId])
+  @@map("clients")
+  @@schema("clients")
+}
+
+enum ClientStatus {
+  ACTIVE
+  PROSPECT
+  INACTIVE
+  TERMINATED
+
+  @@schema("clients")
+}
+
+model ClientUnit {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  clientId   String   @map("client_id") @db.Uuid
+  name       String
+  address    String?
+  latitude   Decimal? @db.Decimal(10, 7)
+  longitude  Decimal? @db.Decimal(10, 7)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  routes Route[]
+
+  @@index([tenantId])
+  @@index([clientId])
+  @@map("client_units")
+  @@schema("clients")
+}
+
+// ============================================================================
+// CLM — contratos e versões
+// ============================================================================
+
+model Contract {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  clientId     String   @map("client_id") @db.Uuid
+  legalEntityId String  @map("legal_entity_id") @db.Uuid
+  code         String   // número interno do contrato
+  title        String
+  status       ContractStatus @default(DRAFT)
+  startDate    DateTime? @map("start_date") @db.Date
+  endDate      DateTime? @map("end_date") @db.Date
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  client      Client @relation(fields: [clientId], references: [id])
+  legalEntity LegalEntity @relation(fields: [legalEntityId], references: [id])
+  versions    ContractVersion[]
+  routes      Route[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([clientId])
+  @@map("contracts")
+  @@schema("clm")
+}
+
+enum ContractStatus {
+  DRAFT
+  UNDER_REVIEW
+  APPROVED
+  SIGNED_PENDING_ACTIVATION
+  ACTIVE
+  SUSPENDED
+  TERMINATED
+
+  @@schema("clm")
+}
+
+model ContractVersion {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  contractId String   @map("contract_id") @db.Uuid
+  version    Int
+  effectiveFrom DateTime? @map("effective_from") @db.Date
+  effectiveTo   DateTime? @map("effective_to") @db.Date
+  snapshotJson  Json     @map("snapshot_json") // termos imutáveis desta versão
+  approvedAt    DateTime? @map("approved_at")
+  approvedBy    String?  @map("approved_by") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@unique([contractId, version])
+  @@index([tenantId])
+  @@map("contract_versions")
+  @@schema("clm")
+}
+
+// ============================================================================
+// SMART ROUTING — rotas, versões, pontos, turnos
+// ============================================================================
+
+model Route {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  contractId  String   @map("contract_id") @db.Uuid
+  clientUnitId String? @map("client_unit_id") @db.Uuid
+  code        String   // ex.: "R-JD-A-IDA"
+  name        String
+  direction   RouteDirection // IDA | VOLTA | ROUND_TRIP
+  status      RouteStatus @default(DRAFT)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contract  Contract @relation(fields: [contractId], references: [id])
+  clientUnit ClientUnit? @relation(fields: [clientUnitId], references: [id])
+  versions  RouteVersion[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([contractId])
+  @@map("routes")
+  @@schema("routing")
+}
+
+enum RouteDirection {
+  IDA
+  VOLTA
+  ROUND_TRIP
+
+  @@schema("routing")
+}
+
+enum RouteStatus {
+  DRAFT
+  UNDER_REVIEW
+  APPROVED
+  ACTIVE
+  RETIRED
+
+  @@schema("routing")
+}
+
+model RouteVersion {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  routeId        String   @map("route_id") @db.Uuid
+  version        Int
+  effectiveFrom  DateTime  @map("effective_from") @db.Date
+  effectiveTo    DateTime? @map("effective_to") @db.Date
+  targetArrivalOffsetMin Int @default(10) @map("target_arrival_offset_min") // minutos antes do turno
+  maxWalkMeters  Int      @default(500) @map("max_walk_meters")
+  capacityMin    Int?     @map("capacity_min")
+  snapshotJson   Json     @map("snapshot_json") // paradas + itinerário congelados
+  publishedAt    DateTime? @map("published_at")
+  publishedBy    String?  @map("published_by") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  route Route @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  stops RouteStop[]
+  turns RouteTurn[]
+  trips ScheduledTrip[]
+
+  @@unique([routeId, version])
+  @@index([tenantId])
+  @@map("route_versions")
+  @@schema("routing")
+}
+
+model RouteStop {
+  id             String @id @default(uuid()) @db.Uuid
+  tenantId       String @map("tenant_id") @db.Uuid
+  routeVersionId String @map("route_version_id") @db.Uuid
+  sequence       Int
+  name           String
+  address        String?
+  latitude       Decimal @db.Decimal(10, 7)
+  longitude      Decimal @db.Decimal(10, 7)
+  // Horário planejado relativo ao turno (minutos antes/depois do início).
+  offsetMinutes  Int    @map("offset_minutes")
+
+  routeVersion RouteVersion @relation(fields: [routeVersionId], references: [id], onDelete: Cascade)
+
+  @@unique([routeVersionId, sequence])
+  @@index([tenantId])
+  @@map("route_stops")
+  @@schema("routing")
+}
+
+model RouteTurn {
+  id             String @id @default(uuid()) @db.Uuid
+  tenantId       String @map("tenant_id") @db.Uuid
+  routeVersionId String @map("route_version_id") @db.Uuid
+  label          String // "A", "B", "Manhã", etc.
+  /// Hora-alvo de chegada ao destino (local time), armazenada como string HH:mm por ser padrão recorrente.
+  targetArrivalTime String @map("target_arrival_time") @db.VarChar(5)
+  daysOfWeek     Int[]  @map("days_of_week") // 1=Seg...7=Dom
+
+  routeVersion RouteVersion @relation(fields: [routeVersionId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("route_turns")
+  @@schema("routing")
+}
+
+// ============================================================================
+// WORKFORCE — motoristas
+// ============================================================================
+
+model Driver {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  fullName    String   @map("full_name")
+  cpf         String   @db.VarChar(11)
+  phone       String?
+  status      DriverStatus @default(ACTIVE)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  licenses DriverLicense[]
+  assignments Assignment[]
+  custodies Custody[]
+
+  @@unique([tenantId, cpf])
+  @@index([tenantId])
+  @@map("drivers")
+  @@schema("workforce")
+}
+
+enum DriverStatus {
+  ACTIVE
+  SUSPENDED
+  TERMINATED
+
+  @@schema("workforce")
+}
+
+model DriverLicense {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  driverId   String   @map("driver_id") @db.Uuid
+  category   String   @db.VarChar(4) // D, E, AD, etc.
+  number     String
+  issuedAt   DateTime @map("issued_at") @db.Date
+  validUntil DateTime @map("valid_until") @db.Date
+
+  driver Driver @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, number])
+  @@index([tenantId])
+  @@index([driverId])
+  @@map("driver_licenses")
+  @@schema("workforce")
+}
+
+// ============================================================================
+// FLEET — veículos e custódia
+// ============================================================================
+
+model Vehicle {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  garageId      String?  @map("garage_id") @db.Uuid
+  internalCode  String   @map("internal_code") // identidade técnica interna
+  licensePlate  String   @map("license_plate") @db.VarChar(7)
+  chassis       String?  @db.VarChar(17)
+  renavam       String?  @db.VarChar(11)
+  category      VehicleCategory
+  seats         Int?
+  modelName     String?  @map("model_name")
+  modelYear     Int?     @map("model_year")
+  operationalStatus VehicleOperationalStatus @default(AVAILABLE) @map("operational_status")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  garage Garage? @relation(fields: [garageId], references: [id])
+  assignments Assignment[]
+  custodies   Custody[]
+  eligibility VehicleEligibilityProjection?
+
+  @@unique([tenantId, internalCode])
+  @@unique([tenantId, licensePlate])
+  @@index([tenantId])
+  @@map("vehicles")
+  @@schema("fleet")
+}
+
+enum VehicleCategory {
+  BUS
+  MINIBUS
+  VAN
+  CAR
+
+  @@schema("fleet")
+}
+
+enum VehicleOperationalStatus {
+  AVAILABLE
+  RESERVED
+  IN_OPERATION
+  IN_MAINTENANCE
+  BLOCKED
+  INACTIVE
+  ALIENATED
+
+  @@schema("fleet")
+}
+
+/**
+ * Projeção read-only computada por Fleet. AutoDispatch e Operations lêem;
+ * nunca criam status paralelos aqui. Atualizada por eventos de domínio.
+ */
+model VehicleEligibilityProjection {
+  vehicleId   String  @id @map("vehicle_id") @db.Uuid
+  tenantId    String  @map("tenant_id") @db.Uuid
+  isEligible  Boolean @map("is_eligible")
+  reasons     Json    // array de motivos ({ code, message, severity })
+  computedAt  DateTime @map("computed_at")
+
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("vehicle_eligibility_projection")
+  @@schema("fleet")
+}
+
+/**
+ * Custódia atual e histórica do veículo. "Em custódia" ≠ "em viagem" ≠
+ * "em garagem" ≠ "disponível".
+ */
+model Custody {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  vehicleId  String   @map("vehicle_id") @db.Uuid
+  driverId   String   @map("driver_id") @db.Uuid
+  startedAt  DateTime @map("started_at")
+  endedAt    DateTime? @map("ended_at")
+  reason     String?  // handover reason
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id])
+  driver  Driver  @relation(fields: [driverId], references: [id])
+
+  @@index([tenantId])
+  @@index([vehicleId])
+  @@index([driverId])
+  @@map("custodies")
+  @@schema("fleet")
+}
+
+// ============================================================================
+// OPERATIONS — viagens programadas, execuções, eventos
+// ============================================================================
+
+model ScheduledTrip {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  routeVersionId  String   @map("route_version_id") @db.Uuid
+  routeTurnId     String   @map("route_turn_id") @db.Uuid
+  operationalDate DateTime @map("operational_date") @db.Date
+  plannedDeparture DateTime @map("planned_departure")
+  plannedArrival  DateTime  @map("planned_arrival")
+  state           ScheduledTripState @default(PLANNED)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  tenant       Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  routeVersion RouteVersion @relation(fields: [routeVersionId], references: [id])
+  assignments  Assignment[]
+  execution    TripExecution?
+
+  @@unique([routeVersionId, routeTurnId, operationalDate])
+  @@index([tenantId, operationalDate])
+  @@map("scheduled_trips")
+  @@schema("operations")
+}
+
+enum ScheduledTripState {
+  PLANNED
+  ASSIGNED
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  EXCEPTION
+
+  @@schema("operations")
+}
+
+/**
+ * Designação OFICIAL motorista + veículo + viagem. Fonte única — qualquer
+ * módulo que precise saber "quem opera o quê" lê daqui.
+ */
+model Assignment {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  scheduledTripId String   @map("scheduled_trip_id") @db.Uuid
+  vehicleId       String   @map("vehicle_id") @db.Uuid
+  driverId        String   @map("driver_id") @db.Uuid
+  state           AssignmentState @default(PROPOSED)
+  reason          String?
+  supersedesId    String?  @map("supersedes_id") @db.Uuid
+  version         Int      @default(1)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  scheduledTrip ScheduledTrip @relation(fields: [scheduledTripId], references: [id])
+  vehicle       Vehicle @relation(fields: [vehicleId], references: [id])
+  driver        Driver  @relation(fields: [driverId], references: [id])
+  supersedes    Assignment? @relation("AssignmentSupersedes", fields: [supersedesId], references: [id])
+  supersededBy  Assignment[] @relation("AssignmentSupersedes")
+
+  @@index([tenantId, scheduledTripId])
+  @@index([tenantId, vehicleId])
+  @@index([tenantId, driverId])
+  @@map("assignments")
+  @@schema("operations")
+}
+
+enum AssignmentState {
+  PROPOSED
+  CONVOKED
+  ACCEPTED
+  PRESENTED
+  CANCELLED
+  SUPERSEDED
+
+  @@schema("operations")
+}
+
+model TripExecution {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  scheduledTripId String   @unique @map("scheduled_trip_id") @db.Uuid
+  state           TripExecutionState @default(NOT_STARTED)
+  startedAt       DateTime? @map("started_at")
+  arrivedAt       DateTime? @map("arrived_at")
+  completedAt     DateTime? @map("completed_at")
+  returnedAt      DateTime? @map("returned_at")
+  validated       Boolean   @default(false)
+  validatedAt     DateTime? @map("validated_at")
+  validatedBy     String?   @map("validated_by") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  scheduledTrip ScheduledTrip @relation(fields: [scheduledTripId], references: [id])
+  events        OperationalEvent[]
+
+  @@index([tenantId])
+  @@map("trip_executions")
+  @@schema("operations")
+}
+
+enum TripExecutionState {
+  NOT_STARTED
+  DRIVER_PRESENTED
+  POSITIONING
+  IN_TRIP
+  ARRIVED
+  COMPLETED
+  RETURNED
+  CANCELLED
+
+  @@schema("operations")
+}
+
+model OperationalEvent {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  tripExecutionId String   @map("trip_execution_id") @db.Uuid
+  type            OperationalEventType
+  deviceTimestamp DateTime? @map("device_timestamp")
+  serverTimestamp DateTime @default(now()) @map("server_timestamp")
+  source          EventSource
+  confidence      EventConfidence
+  precisionSeconds Int?    @map("precision_seconds")
+  latitude        Decimal? @db.Decimal(10, 7)
+  longitude       Decimal? @db.Decimal(10, 7)
+  idempotencyKey  String   @map("idempotency_key")
+  payload         Json?
+
+  tripExecution TripExecution @relation(fields: [tripExecutionId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, tripExecutionId])
+  @@map("operational_events")
+  @@schema("operations")
+}
+
+enum OperationalEventType {
+  DRIVER_PRESENTED
+  VEHICLE_POSITIONING
+  TRIP_STARTED
+  TRIP_ARRIVED
+  TRIP_COMPLETED
+  RETURNED_TO_GARAGE
+  SHIFT_ENDED
+  INCIDENT_REPORTED
+
+  @@schema("operations")
+}
+
+enum EventSource {
+  DRIVER_APP
+  SUPERVISOR
+  GPS_DEVICE
+  MANUAL
+  INTEGRATION
+
+  @@schema("operations")
+}
+
+enum EventConfidence {
+  HIGH
+  MEDIUM
+  LOW
+  UNKNOWN
+
+  @@schema("operations")
+}
+
+// ============================================================================
+// IDEMPOTENCY — chave idempotente global (dedupe entre integrações)
+// ============================================================================
+
+model IdempotencyRecord {
+  key         String   @id
+  tenantId    String?  @map("tenant_id") @db.Uuid
+  scope       String
+  requestHash String   @map("request_hash")
+  responseJson Json?   @map("response_json")
+  createdAt   DateTime @default(now()) @map("created_at")
+  expiresAt   DateTime @map("expires_at")
+
+  @@index([tenantId])
+  @@index([expiresAt])
+  @@map("idempotency_records")
+  @@schema("core")
+}

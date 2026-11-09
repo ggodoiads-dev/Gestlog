@@ -1,0 +1,99 @@
+/*
+ * GESTLOG — tokens do design system.
+ * Cores "precision enterprise" (ver docs/DESIGN_SYSTEM.md).
+ * Paleta provisória (PT-04): substituível quando a marca oficial chegar.
+ */
+:root {
+  /* Navy / autoridade */
+  --color-navy-950: #0a1420;
+  --color-navy-900: #101d30;
+  --color-navy-800: #172d49;
+  --color-navy-700: #1f3a5f;
+
+  /* Ink (texto no modo claro) */
+  --color-ink-900: #0f172a;
+  --color-ink-700: #334155;
+  --color-ink-500: #64748b;
+
+  /* Superfícies */
+  --color-surface-0: #ffffff;
+  --color-surface-50: #f6f8fc;
+  --color-surface-100: #eef2f8;
+  --color-surface-200: #dbe3ef;
+
+  /* Acento (ação primária, link, foco) */
+  --color-accent-700: #1f5fb8;
+  --color-accent-600: #3278d3;
+  --color-accent-500: #4a8fe0;
+  --color-accent-300: #8eb9ee;
+
+  /* Estados */
+  --color-success-600: #15803d;
+  --color-warning-600: #b45309;
+  --color-danger-600: #b91c1c;
+  --color-info-600: #0369a1;
+
+  /* Semânticos (aliases por tema) */
+  --surface-page: var(--color-surface-50);
+  --surface-card: var(--color-surface-0);
+  --surface-raised: var(--color-surface-0);
+  --surface-border: var(--color-surface-200);
+
+  --text-primary: var(--color-ink-900);
+  --text-secondary: var(--color-ink-700);
+  --text-tertiary: var(--color-ink-500);
+
+  --accent: var(--color-accent-600);
+  --accent-hover: var(--color-accent-500);
+
+  --radius-control: 6px;
+  --radius-card: 10px;
+  --radius-modal: 14px;
+
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 1px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 4px 8px rgba(15, 23, 42, 0.06), 0 2px 4px rgba(15, 23, 42, 0.04);
+
+  --font-sans: 'Inter', -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+}
+
+:root[data-theme='dark'],
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --surface-page: var(--color-navy-950);
+    --surface-card: var(--color-navy-900);
+    --surface-raised: var(--color-navy-800);
+    --surface-border: var(--color-navy-700);
+
+    --text-primary: #e5ecf5;
+    --text-secondary: #b7c3d4;
+    --text-tertiary: #8291a6;
+
+    --accent: var(--color-accent-500);
+    --accent-hover: var(--color-accent-300);
+  }
+}
+
+html,
+body {
+  background: var(--surface-page);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-feature-settings: 'ss01', 'cv11';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Números sempre em tabular. */
+table,
+.tabular,
+.text-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Foco visível sempre. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-control);
+}

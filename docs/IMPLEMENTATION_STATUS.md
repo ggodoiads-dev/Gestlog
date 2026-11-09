@@ -21,13 +21,20 @@
 
 | Item | Estado | Evidência |
 |------|--------|-----------|
-| Documentação-base (`docs/`) | `in-progress` | Arquivos neste commit |
-| ADRs 0001/0002/0003 | `in-progress` | `docs/adr/` |
-| Monorepo pnpm + Turbo | `not-started` | — |
-| Docker Compose (Postgres, Redis, Mailhog) | `not-started` | — |
-| Design system base (tokens + componentes mínimos) | `not-started` | — |
-| CI (lint + typecheck + unit) | `not-started` | — |
-| Observabilidade inicial (pino + healthchecks) | `not-started` | — |
+| Documentação-base (`docs/`) | `scaffolded` | 11 docs + 3 ADRs |
+| ADRs 0001/0002/0003 | `scaffolded` | `docs/adr/0001-0003` |
+| Monorepo pnpm + Turbo | `scaffolded` | `package.json`, `pnpm-workspace.yaml`, `turbo.json` |
+| Docker Compose (Postgres, Redis, Mailhog, MinIO) | `scaffolded` | `docker-compose.yml`, `scripts/bootstrap.mjs` |
+| Schema Prisma inicial | `scaffolded` | `packages/db/prisma/schema.prisma` (Core + Clients + CLM + Routing + Workforce + Fleet + Operations + Audit + Idempotency) |
+| RLS policies | `scaffolded` | `packages/db/prisma/rls.sql` — aguardando migration inicial |
+| Backend NestJS | `scaffolded` | `apps/api` — `/health`, `/health/ready`, `/health/integrations`, TenantContextService |
+| Design system base | `scaffolded` | `packages/ui` — tokens.css + Button + Badge + DemoBanner + preset Tailwind |
+| App web Next.js | `scaffolded` | `apps/web` — landing dia 0 com DemoBanner |
+| Driver PWA Next.js | `scaffolded` | `apps/driver` — landing dia 0 |
+| `packages/shared` (Money, Zod, Tenant) | `implemented` | `packages/shared/src/*`; `money.spec.ts` cobre precisão, moeda, centavos, pt-BR, arredondamento, formatação |
+| `packages/domain` placeholder | `not-started` | aguardando primeiro caso de uso |
+| CI (lint + typecheck + unit + build) | `scaffolded` | `.github/workflows/ci.yml` |
+| Observabilidade inicial (pino + healthchecks) | `scaffolded` | nestjs-pino + redact de campos sensíveis |
 
 ## 2. Módulos (ver `MODULE_CATALOG.md`)
 

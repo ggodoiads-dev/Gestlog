@@ -1,0 +1,15 @@
+# Owners padrão do repositório. Revise este arquivo assim que houver time
+# definido; cada caminho pode ter owners específicos.
+
+*       @ggodoiads-dev
+
+# Documentação exige revisão deliberada (contrato de produto).
+/docs/  @ggodoiads-dev
+
+# Camada financeira e segurança têm sensibilidade reforçada.
+/apps/api/src/modules/finance/    @ggodoiads-dev
+/apps/api/src/modules/ap/         @ggodoiads-dev
+/apps/api/src/modules/ar/         @ggodoiads-dev
+/apps/api/src/modules/treasury/   @ggodoiads-dev
+/apps/api/src/modules/governance/ @ggodoiads-dev
+/packages/db/prisma/              @ggodoiads-dev

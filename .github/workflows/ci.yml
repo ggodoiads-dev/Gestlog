@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main, claude/**]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TZ: America/Sao_Paulo
+  NODE_ENV: test
+
+jobs:
+  checks:
+    name: lint · typecheck · test · build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: gestlog
+          POSTGRES_PASSWORD: gestlog
+          POSTGRES_DB: gestlog
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd="pg_isready -U gestlog"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.9.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Prisma generate
+        run: pnpm --filter @gestlog/db prisma:generate
+        env:
+          DATABASE_URL: postgres://gestlog:gestlog@localhost:5432/gestlog
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+  docs-link-check:
+    name: docs links
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check internal doc links
+        run: |
+          set -e
+          fail=0
+          while IFS= read -r -d '' file; do
+            while read -r link; do
+              target="${link%#*}"
+              [ -z "$target" ] && continue
+              # resolve relative to the file's directory
+              dir=$(dirname "$file")
+              resolved="$(realpath -m "$dir/$target")"
+              if [ ! -e "$resolved" ]; then
+                echo "::error file=$file::link quebrado: $link"
+                fail=1
+              fi
+            done < <(grep -oE '\]\(\./[^)]+\)' "$file" | sed -E 's/^\]\((.+)\)$/\1/')
+          done < <(find docs README.md -type f -name '*.md' -print0)
+          exit $fail
