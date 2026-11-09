@@ -1,6 +1,7 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { ComplianceService } from '../compliance/compliance.service';
 import { DriversService } from '../workforce/drivers.service';
 import type { CreateAssignmentDto } from './autodispatch.dto';
 
@@ -26,6 +27,7 @@ export class AssignmentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly drivers: DriversService,
+    private readonly compliance: ComplianceService,
   ) {}
 
   async propose(
@@ -69,6 +71,22 @@ export class AssignmentsService {
       );
       if (!driverCheck.eligible) {
         throw new ForbiddenException(`motorista não elegível: ${driverCheck.reason}`);
+      }
+
+      // AT-04 — jornada do motorista. Checagem ANTES do insert para que uma
+      // designação ilegal nem chegue a existir.
+      const compliance = await this.compliance.checkJourneyInTx(tx, ctx.tenantId, {
+        driverId: dto.driverId,
+        startAt: trip.plannedDeparture,
+        endAt: trip.plannedArrival,
+      });
+      if (!compliance.ok) {
+        const first = compliance.violations[0];
+        throw new ForbiddenException({
+          message: `motorista violaria ${first?.code}`,
+          code: first?.code,
+          violations: compliance.violations,
+        });
       }
 
       try {
