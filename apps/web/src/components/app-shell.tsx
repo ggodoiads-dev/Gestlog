@@ -31,7 +31,7 @@ const NAV: NavGroup[] = [
     items: [
       { label: 'Veículos', href: '/veiculos', permission: 'fleet.vehicles.read' },
       { label: 'Manutenção', href: '/manutencao', soon: true },
-      { label: 'Combustível', href: '/combustivel', soon: true },
+      { label: 'Combustível', href: '/combustivel', permission: 'fuel.tanks.read' },
     ],
   },
   {

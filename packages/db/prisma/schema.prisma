@@ -11,7 +11,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  schemas  = ["core", "clients", "clm", "routing", "workforce", "fleet", "operations", "billing", "ar", "procurement", "ap", "governance", "finance", "audit"]
+  schemas  = ["core", "clients", "clm", "routing", "workforce", "fleet", "operations", "billing", "ar", "procurement", "ap", "governance", "finance", "fuel", "audit"]
 }
 
 // ============================================================================
@@ -1204,6 +1204,130 @@ enum BankTxnState {
   IGNORED  // decisão explícita de não conciliar (tarifa, estorno, etc)
 
   @@schema("finance")
+}
+
+// ============================================================================
+// FUEL — tanques, compras, abastecimentos, transferências
+// (prompt mestre §24) · AT-13, AT-14, AT-15
+// ============================================================================
+
+model FuelTank {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  garageId       String?  @map("garage_id") @db.Uuid
+  code           String
+  name           String
+  product        FuelProduct @default(DIESEL_S10)
+  capacityMl     BigInt   @map("capacity_ml") // 1 L = 1000 ml
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  purchases       FuelPurchase[]
+  fills           FuelFill[]
+  transfersOut    FuelTransfer[] @relation("FuelTransferFrom")
+  transfersIn     FuelTransfer[] @relation("FuelTransferTo")
+
+  @@unique([tenantId, code])
+  @@index([tenantId, active])
+  @@map("tanks")
+  @@schema("fuel")
+}
+
+enum FuelProduct {
+  DIESEL_S10
+  DIESEL_S500
+  ARLA_32
+  GASOLINE_COMMON
+  GASOLINE_ADDITIVE
+  ETHANOL
+
+  @@schema("fuel")
+}
+
+// Compra de combustível.
+// AT-14: se o totalCostCents estiver acima do limite da alçada de quem
+// registrou, nasce como PENDING_APPROVAL. Só CONFIRMED entra no saldo.
+model FuelPurchase {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  tankId         String   @map("tank_id") @db.Uuid
+  supplierName   String   @map("supplier_name")
+  supplierCnpj   String?  @map("supplier_cnpj")
+  invoiceNumber  String?  @map("invoice_number")
+  quantityMl     BigInt   @map("quantity_ml")
+  totalCostCents BigInt   @map("total_cost_cents")
+  currency       String   @default("BRL") @db.VarChar(3)
+  purchasedAt    DateTime @map("purchased_at")
+  status         FuelPurchaseStatus @default(CONFIRMED)
+  // AT-14: compra emergencial carrega esse flag; sem aprovação, não
+  // entra no saldo do tanque.
+  emergency      Boolean  @default(false)
+  reason         String?  // motivo da emergência / da reprovação
+  requestedBy    String   @map("requested_by") @db.Uuid
+  approvedBy     String?  @map("approved_by") @db.Uuid
+  approvedAt     DateTime? @map("approved_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  tank FuelTank @relation(fields: [tankId], references: [id])
+
+  @@index([tenantId, tankId, purchasedAt])
+  @@index([tenantId, status])
+  @@map("purchases")
+  @@schema("fuel")
+}
+
+enum FuelPurchaseStatus {
+  PENDING_APPROVAL // AT-14: emergencial, aguardando OK
+  CONFIRMED        // conta no saldo
+  REJECTED         // nunca entrou
+
+  @@schema("fuel")
+}
+
+// Abastecimento de um veículo com combustível DO tanque.
+// AT-13: debita o tanque; é operação INDEPENDENTE de compra.
+model FuelFill {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  tankId         String   @map("tank_id") @db.Uuid
+  vehicleId      String   @map("vehicle_id") @db.Uuid
+  driverId       String?  @map("driver_id") @db.Uuid
+  quantityMl     BigInt   @map("quantity_ml")
+  odometerKm     Int?     @map("odometer_km") // para cálculo de km/L
+  filledAt       DateTime @map("filled_at")
+  reference      String?  // id do bico, NF, etc
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  tank FuelTank @relation(fields: [tankId], references: [id])
+
+  @@index([tenantId, tankId, filledAt])
+  @@index([tenantId, vehicleId, filledAt])
+  @@map("fills")
+  @@schema("fuel")
+}
+
+// Transferência entre tanques.
+// AT-15: debita um e credita o outro atomicamente; NÃO é compra nova.
+model FuelTransfer {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  fromTankId     String   @map("from_tank_id") @db.Uuid
+  toTankId       String   @map("to_tank_id") @db.Uuid
+  quantityMl     BigInt   @map("quantity_ml")
+  transferredAt  DateTime @map("transferred_at")
+  reason         String?
+  createdBy      String   @map("created_by") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  fromTank FuelTank @relation("FuelTransferFrom", fields: [fromTankId], references: [id])
+  toTank   FuelTank @relation("FuelTransferTo",   fields: [toTankId],   references: [id])
+
+  @@index([tenantId, fromTankId, transferredAt])
+  @@index([tenantId, toTankId, transferredAt])
+  @@map("transfers")
+  @@schema("fuel")
 }
 
 // ============================================================================
