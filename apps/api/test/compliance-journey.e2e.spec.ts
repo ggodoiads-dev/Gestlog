@@ -46,6 +46,14 @@ let restTripIds: { day20Night: string; day21Dawn: string; day21Morning: string }
   day21Morning: '',
 };
 
+// Veículo + drivers do cenário AT-06 (exclusividade de slot, dia 30).
+let slotSharedVehicleId: string;
+let slotAltVehicleId: string;
+let slotDriver1Id: string;
+let slotDriver2Id: string;
+let slotDriver3Id: string;
+let slotTripIds: { tA: string; tB: string; tC: string } = { tA: '', tB: '', tC: '' };
+
 const RUN_ID = Date.now();
 // Ano distante dos outros arquivos E2E (AT-08 usa 2030..2080; AT-20 e
 // AT-26 ficam no mesmo range). Aqui vamos para 2140+.
@@ -281,6 +289,72 @@ beforeAll(async () => {
     day21Morning: tripsRest[3].id,
   };
 
+  // ---------- Rota do cenário AT-06 (3 turnos no dia 30) ------------------
+  const SLOT_ROUTE = `R-AT06-${RUN_ID}`;
+  const resRs = await request(app.getHttpServer())
+    .post('/v1/routes')
+    .set('Authorization', `Bearer ${token}`)
+    .send({ contractId, code: SLOT_ROUTE, name: 'Rota AT-06', direction: 'IDA' })
+    .expect(201);
+  const slotRouteId: string = resRs.body.id;
+
+  const resVs = await request(app.getHttpServer())
+    .post(`/v1/routes/${slotRouteId}/versions`)
+    .set('Authorization', `Bearer ${token}`)
+    .send({
+      effectiveFrom: `${YEAR}-01-30`,
+      targetArrivalOffsetMin: 10,
+      maxWalkMeters: 500,
+      stops: [
+        { sequence: 1, name: 'A', latitude: -23.5, longitude: -46.6, offsetMinutes: -30 },
+        { sequence: 2, name: 'B', latitude: -23.6, longitude: -46.7, offsetMinutes: 0 },
+      ],
+      turns: [
+        { label: 'Alfa', targetArrivalTime: '06:00', daysOfWeek: [1, 2, 3, 4, 5, 6, 7] },
+        { label: 'Bravo', targetArrivalTime: '12:00', daysOfWeek: [1, 2, 3, 4, 5, 6, 7] },
+        { label: 'Charlie', targetArrivalTime: '18:00', daysOfWeek: [1, 2, 3, 4, 5, 6, 7] },
+      ],
+    })
+    .expect(201);
+  const slotVersionId: string = resVs.body.id;
+
+  await request(app.getHttpServer())
+    .post(`/v1/routes/${slotRouteId}/versions/${slotVersionId}/publish`)
+    .set('Authorization', `Bearer ${token}`)
+    .expect(200);
+
+  await request(app.getHttpServer())
+    .post(`/v1/routes/${slotRouteId}/expand`)
+    .set('Authorization', `Bearer ${token}`)
+    .send({ fromDate: `${YEAR}-01-30`, toDate: `${YEAR}-01-30` })
+    .expect(200);
+
+  // Reescreve janelas:
+  //   Trip A: 06-10 (4h)  — vai usar slotSharedVehicle + driver1
+  //   Trip B: 09-12 (3h)  — OVERLAP com A → deve falhar no shared; passa com alt
+  //   Trip C: 11-14 (3h)  — sem overlap com A (A termina 10:00, C começa 11:00)
+  const tripsSlot = await prisma.scheduledTrip.findMany({
+    where: { routeVersionId: slotVersionId },
+    orderBy: { plannedDeparture: 'asc' },
+  });
+  await prisma.scheduledTrip.update({
+    where: { id: tripsSlot[0].id },
+    data: { plannedDeparture: iso(YEAR, 1, 30, 6), plannedArrival: iso(YEAR, 1, 30, 10) },
+  });
+  await prisma.scheduledTrip.update({
+    where: { id: tripsSlot[1].id },
+    data: { plannedDeparture: iso(YEAR, 1, 30, 9), plannedArrival: iso(YEAR, 1, 30, 12) },
+  });
+  await prisma.scheduledTrip.update({
+    where: { id: tripsSlot[2].id },
+    data: { plannedDeparture: iso(YEAR, 1, 30, 11), plannedArrival: iso(YEAR, 1, 30, 14) },
+  });
+  slotTripIds = {
+    tA: tripsSlot[0].id,
+    tB: tripsSlot[1].id,
+    tC: tripsSlot[2].id,
+  };
+
   // ---------- Veículos + motoristas ---------------------------------------
   const resVehD = await request(app.getHttpServer())
     .post('/v1/vehicles')
@@ -369,6 +443,53 @@ beforeAll(async () => {
     .expect(201);
   restDriverId = resDrvR.body.id;
 
+  // --- AT-06: 2 veículos e 3 motoristas isolados -------------------------
+  const resVehS = await request(app.getHttpServer())
+    .post('/v1/vehicles')
+    .set('Authorization', `Bearer ${token}`)
+    .send({
+      internalCode: `V-AT06-S-${RUN_ID}`,
+      licensePlate: randomPlate('PQR'),
+      category: 'BUS',
+      seats: 44,
+    })
+    .expect(201);
+  slotSharedVehicleId = resVehS.body.id;
+
+  const resVehA = await request(app.getHttpServer())
+    .post('/v1/vehicles')
+    .set('Authorization', `Bearer ${token}`)
+    .send({
+      internalCode: `V-AT06-A-${RUN_ID}`,
+      licensePlate: randomPlate('STU'),
+      category: 'BUS',
+      seats: 44,
+    })
+    .expect(201);
+  slotAltVehicleId = resVehA.body.id;
+
+  const createDrv = async (suffix: number): Promise<string> => {
+    const cpf = cpfFor(10 + suffix);
+    const res = await request(app.getHttpServer())
+      .post('/v1/drivers')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        fullName: `Motorista Slot AT06 #${suffix}`,
+        cpf,
+        license: {
+          category: 'D',
+          number: `CNH${cpf}`,
+          issuedAt: `${YEAR - 1}-01-01`,
+          validUntil: `${YEAR + 5}-12-31`,
+        },
+      })
+      .expect(201);
+    return res.body.id as string;
+  };
+  slotDriver1Id = await createDrv(1);
+  slotDriver2Id = await createDrv(2);
+  slotDriver3Id = await createDrv(3);
+
   await prisma.$disconnect();
 });
 
@@ -455,6 +576,48 @@ describe('AT-05 — descanso interjornada (11h)', () => {
       .post(`/v1/scheduled-trips/${restTripIds.day21Morning}/assignments`)
       .set('Authorization', `Bearer ${token}`)
       .send({ vehicleId: restVehicleId, driverId: restDriverId })
+      .expect(201);
+  });
+});
+
+describe('AT-06 — exclusividade de veículo no slot', () => {
+  it('aceita o primeiro slot (A 06-10) com o veículo compartilhado', async () => {
+    await request(app.getHttpServer())
+      .post(`/v1/scheduled-trips/${slotTripIds.tA}/assignments`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ vehicleId: slotSharedVehicleId, driverId: slotDriver1Id })
+      .expect(201);
+  });
+
+  it('rejeita slot B (09-12) com o mesmo veículo: overlap de 1h com A', async () => {
+    const res = await request(app.getHttpServer())
+      .post(`/v1/scheduled-trips/${slotTripIds.tB}/assignments`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ vehicleId: slotSharedVehicleId, driverId: slotDriver2Id })
+      .expect(403);
+
+    const body = res.body as {
+      code?: string;
+      violations?: { conflictingAssignmentId?: string; actualHours: number }[];
+    };
+    expect(body.code).toBe('VEHICLE_SLOT_CONFLICT');
+    expect(body.violations?.[0]?.actualHours).toBe(1);
+    expect(body.violations?.[0]?.conflictingAssignmentId).toBeTruthy();
+  });
+
+  it('aceita slot B com outro veículo (sem conflito de slot)', async () => {
+    await request(app.getHttpServer())
+      .post(`/v1/scheduled-trips/${slotTripIds.tB}/assignments`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ vehicleId: slotAltVehicleId, driverId: slotDriver2Id })
+      .expect(201);
+  });
+
+  it('aceita slot C (11-14) com o veículo compartilhado: sem overlap com A', async () => {
+    await request(app.getHttpServer())
+      .post(`/v1/scheduled-trips/${slotTripIds.tC}/assignments`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ vehicleId: slotSharedVehicleId, driverId: slotDriver3Id })
       .expect(201);
   });
 });

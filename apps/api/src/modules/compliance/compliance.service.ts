@@ -12,10 +12,13 @@ import type { PrismaClient } from '@prisma/client';
  *   - AT-05 descanso interjornada: no mínimo 11h de gap entre a chegada
  *     de uma designação e a saída da seguinte (mesmo motorista), em
  *     qualquer direção temporal (CLT art. 66, Lei 13.103/2015 art. 67-A).
+ *   - AT-06 exclusividade de veículo no slot: o mesmo veículo não pode
+ *     estar em duas designações vivas cujos intervalos planejados se
+ *     sobreponham. Toque na fronteira (fim-A == início-B) não conta como
+ *     sobreposição.
  *
  * As durações são computadas a partir da janela planejada da ScheduledTrip
- * (plannedDeparture → plannedArrival). AT-06 (exclusividade de veículo em
- * slot) fica em fatia própria e reusa este serviço como ponto único.
+ * (plannedDeparture → plannedArrival).
  *
  * Importante: o guard NÃO altera dados. Ele retorna um resultado estruturado
  * para que o chamador escolha como reagir (bloquear, avisar, auditar).
@@ -29,29 +32,39 @@ const EPS = 1e-6;
 const MS_PER_HOUR = 3_600_000;
 const MS_PER_DAY = 86_400_000;
 
-export interface JourneyCheckInput {
+export interface AssignmentCheckInput {
   driverId: string;
+  vehicleId: string;
   startAt: Date;
   endAt: Date;
+  /**
+   * `scheduledTripId` da designação proposta. Excluído dos checks porque
+   * a unicidade por trip já é dominada por índice único parcial em
+   * `assignments` (AT-08). Deixar entrar aqui faria o compliance disparar
+   * antes da invariante do banco e tornaria o código de erro inconsistente.
+   */
+  scheduledTripId?: string;
   excludeAssignmentId?: string;
 }
 
-export type JourneyViolationCode =
+export type ComplianceViolationCode =
   | 'JOURNEY_DAILY_LIMIT'
   | 'JOURNEY_WEEKLY_LIMIT'
-  | 'INTERJOURNEY_REST';
+  | 'INTERJOURNEY_REST'
+  | 'VEHICLE_SLOT_CONFLICT';
 
-export interface JourneyViolation {
-  code: JourneyViolationCode;
+export interface ComplianceViolation {
+  code: ComplianceViolationCode;
   limitHours: number;
   actualHours: number;
   windowStart: string;
   windowEnd: string;
+  conflictingAssignmentId?: string;
 }
 
 export interface ComplianceResult {
   ok: boolean;
-  violations: JourneyViolation[];
+  violations: ComplianceViolation[];
 }
 
 function hoursBetween(a: Date, b: Date): number {
@@ -68,10 +81,10 @@ function round2(n: number): number {
 
 @Injectable()
 export class ComplianceService {
-  async checkJourneyInTx(
+  async checkAssignmentInTx(
     tx: PrismaClient,
     tenantId: string,
-    input: JourneyCheckInput,
+    input: AssignmentCheckInput,
   ): Promise<ComplianceResult> {
     if (input.endAt.getTime() <= input.startAt.getTime()) {
       // Janela inválida — devolve ok=false explícito em vez de deixar aritmética negativa.
@@ -101,6 +114,9 @@ export class ComplianceService {
         tenantId,
         driverId: input.driverId,
         state: { notIn: ['CANCELLED', 'SUPERSEDED'] },
+        ...(input.scheduledTripId
+          ? { scheduledTripId: { not: input.scheduledTripId } }
+          : {}),
         ...(input.excludeAssignmentId ? { id: { not: input.excludeAssignmentId } } : {}),
         scheduledTrip: {
           plannedDeparture: { lt: input.endAt },
@@ -141,7 +157,7 @@ export class ComplianceService {
         0,
       ) + proposedHours;
 
-    const violations: JourneyViolation[] = [];
+    const violations: ComplianceViolation[] = [];
     if (dailyHours > JOURNEY_DAILY_LIMIT_HOURS + EPS) {
       violations.push({
         code: 'JOURNEY_DAILY_LIMIT',
@@ -204,6 +220,49 @@ export class ComplianceService {
           windowEnd: curr.start.toISOString(),
         });
       }
+    }
+
+    // AT-06 — exclusividade de veículo no slot. O mesmo veículo não pode
+    // estar em duas designações vivas cujos intervalos se sobreponham.
+    // Toque na fronteira (fim-A == início-B) não é sobreposição.
+    const vehicleConflicts = await tx.assignment.findMany({
+      where: {
+        tenantId,
+        vehicleId: input.vehicleId,
+        state: { notIn: ['CANCELLED', 'SUPERSEDED'] },
+        ...(input.scheduledTripId
+          ? { scheduledTripId: { not: input.scheduledTripId } }
+          : {}),
+        ...(input.excludeAssignmentId ? { id: { not: input.excludeAssignmentId } } : {}),
+        scheduledTrip: {
+          plannedDeparture: { lt: input.endAt },
+          plannedArrival: { gt: input.startAt },
+        },
+      },
+      select: {
+        id: true,
+        scheduledTrip: {
+          select: { plannedDeparture: true, plannedArrival: true },
+        },
+      },
+    });
+    for (const c of vehicleConflicts) {
+      const overlapStart =
+        c.scheduledTrip.plannedDeparture > input.startAt
+          ? c.scheduledTrip.plannedDeparture
+          : input.startAt;
+      const overlapEnd =
+        c.scheduledTrip.plannedArrival < input.endAt
+          ? c.scheduledTrip.plannedArrival
+          : input.endAt;
+      violations.push({
+        code: 'VEHICLE_SLOT_CONFLICT',
+        limitHours: 0,
+        actualHours: round2(hoursBetween(overlapStart, overlapEnd)),
+        windowStart: overlapStart.toISOString(),
+        windowEnd: overlapEnd.toISOString(),
+        conflictingAssignmentId: c.id,
+      });
     }
 
     return { ok: violations.length === 0, violations };

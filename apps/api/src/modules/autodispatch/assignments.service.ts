@@ -73,17 +73,20 @@ export class AssignmentsService {
         throw new ForbiddenException(`motorista não elegível: ${driverCheck.reason}`);
       }
 
-      // AT-04 — jornada do motorista. Checagem ANTES do insert para que uma
-      // designação ilegal nem chegue a existir.
-      const compliance = await this.compliance.checkJourneyInTx(tx, ctx.tenantId, {
+      // AT-04/05/06 — guard de compliance. Checagem ANTES do insert para
+      // que uma designação ilegal nem chegue a existir (cobre jornada do
+      // motorista e exclusividade do veículo no slot).
+      const compliance = await this.compliance.checkAssignmentInTx(tx, ctx.tenantId, {
         driverId: dto.driverId,
+        vehicleId: dto.vehicleId,
         startAt: trip.plannedDeparture,
         endAt: trip.plannedArrival,
+        scheduledTripId,
       });
       if (!compliance.ok) {
         const first = compliance.violations[0];
         throw new ForbiddenException({
-          message: `motorista violaria ${first?.code}`,
+          message: `violação de compliance: ${first?.code}`,
           code: first?.code,
           violations: compliance.violations,
         });
