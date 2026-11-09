@@ -10,6 +10,7 @@ um novo ADR que supersede o antigo (campo `Supersedes` / `Superseded by`).
 | 0001 | Stack principal (TypeScript + NestJS + Next.js + Postgres) | Accepted |
 | 0002 | Monorepo com pnpm workspaces + Turborepo | Accepted |
 | 0003 | Isolamento multi-tenant com RLS do Postgres como segunda camada | Accepted |
+| 0004 | Deploy — Vercel (frontend) + Railway (backend) | Accepted |
 
 ## Formato
 

@@ -1,7 +1,16 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    (err as { code?: string }).code === 'P2002'
+  );
+}
 import type { OperationalEventType, SubmitEventDto } from './operational-events.dto';
 
 interface SubmittedEvent {
@@ -52,62 +61,50 @@ export class OperationalEventsService {
         'header Idempotency-Key obrigatório (mín. 16 caracteres)',
       );
     }
-    return this.prisma.withTenantFromCtx(ctx, async (tx) => {
-      // 1. Dedupe: se já existe evento com essa chave, retorna.
-      const existing = await tx.operationalEvent.findUnique({
-        where: {
-          tenantId_idempotencyKey: { tenantId: ctx.tenantId, idempotencyKey },
-        },
-        include: { tripExecution: true },
-      });
-      if (existing) {
-        // Verifica se é O MESMO payload — se não for, cliente usou a mesma
-        // chave para intenções diferentes; isso é bug deles, 409.
-        if (
-          existing.tripExecution.scheduledTripId !== scheduledTripId ||
-          existing.type !== dto.type
-        ) {
-          throw new ConflictException(
-            'Idempotency-Key já usada para outro evento (trip ou type divergem)',
-          );
+
+    // 1. Dedupe upfront em transação curta e isolada. Se já existe, retorna.
+    const existing = await this.lookupByKey(ctx, idempotencyKey);
+    if (existing) {
+      if (
+        existing.tripExecution.scheduledTripId !== scheduledTripId ||
+        existing.type !== dto.type
+      ) {
+        throw new ConflictException(
+          'Idempotency-Key já usada para outro evento (trip ou type divergem)',
+        );
+      }
+      return {
+        id: existing.id,
+        type: existing.type as OperationalEventType,
+        serverTimestamp: existing.serverTimestamp,
+        tripExecutionId: existing.tripExecutionId,
+        tripExecutionState: existing.tripExecution.state,
+        wasDeduped: true,
+      };
+    }
+
+    // 2. Tenta criar o fato. Se perder corrida (P2002), relê fora da tx abortada.
+    try {
+      return await this.prisma.withTenantFromCtx(ctx, async (tx) => {
+        const trip = await tx.scheduledTrip.findUnique({
+          where: { id: scheduledTripId },
+        });
+        if (!trip) throw new NotFoundException('viagem programada não encontrada');
+        if (trip.state === 'CANCELLED') {
+          throw new ConflictException('viagem cancelada não recebe eventos');
         }
-        return {
-          id: existing.id,
-          type: existing.type as OperationalEventType,
-          serverTimestamp: existing.serverTimestamp,
-          tripExecutionId: existing.tripExecutionId,
-          tripExecutionState: existing.tripExecution.state,
-          wasDeduped: true,
-        };
-      }
 
-      // 2. Resolve trip + assignment ativo. Sem assignment = 404.
-      const trip = await tx.scheduledTrip.findUnique({
-        where: { id: scheduledTripId },
-      });
-      if (!trip) throw new NotFoundException('viagem programada não encontrada');
-      if (trip.state === 'CANCELLED') {
-        throw new ConflictException('viagem cancelada não recebe eventos');
-      }
+        const execution = await tx.tripExecution.upsert({
+          where: { scheduledTripId },
+          update: {},
+          create: {
+            tenantId: ctx.tenantId,
+            scheduledTripId,
+            state: 'NOT_STARTED',
+          },
+        });
 
-      // 3. Garante TripExecution.
-      const execution = await tx.tripExecution.upsert({
-        where: { scheduledTripId },
-        update: {},
-        create: {
-          tenantId: ctx.tenantId,
-          scheduledTripId,
-          state: 'NOT_STARTED',
-        },
-      });
-
-      // 4. Registra o evento. O unique index (tenantId, idempotencyKey) impede
-      //    duplicação sob corrida; dois submits concorrentes com a mesma chave
-      //    → segundo pega P2002 e cai no fluxo de dedupe acima na proxima
-      //    requisição.
-      let event;
-      try {
-        event = await tx.operationalEvent.create({
+        const event = await tx.operationalEvent.create({
           data: {
             tenantId: ctx.tenantId,
             tripExecutionId: execution.id,
@@ -128,62 +125,78 @@ export class OperationalEventsService {
               : {}),
           },
         });
-      } catch (err) {
-        const code =
-          typeof err === 'object' && err !== null && 'code' in err
-            ? (err as { code?: string }).code
-            : undefined;
-        if (code === 'P2002') {
-          // Alguém chegou antes nessa mesma Idempotency-Key — rebusca.
-          const now = await tx.operationalEvent.findUnique({
-            where: {
-              tenantId_idempotencyKey: { tenantId: ctx.tenantId, idempotencyKey },
-            },
-            include: { tripExecution: true },
+
+        const nextState = this.nextExecutionState(execution.state, dto.type);
+        if (nextState !== execution.state) {
+          await tx.tripExecution.update({
+            where: { id: execution.id },
+            data: this.executionPatch(dto.type, event.serverTimestamp),
           });
-          if (!now) throw err;
-          return {
-            id: now.id,
-            type: now.type as OperationalEventType,
-            serverTimestamp: now.serverTimestamp,
-            tripExecutionId: now.tripExecutionId,
-            tripExecutionState: now.tripExecution.state,
-            wasDeduped: true,
-          };
         }
-        throw err;
-      }
+        if (dto.type === 'TRIP_STARTED' && trip.state !== 'IN_PROGRESS') {
+          await tx.scheduledTrip.update({
+            where: { id: trip.id },
+            data: { state: 'IN_PROGRESS' },
+          });
+        } else if (dto.type === 'TRIP_COMPLETED' && trip.state !== 'COMPLETED') {
+          await tx.scheduledTrip.update({
+            where: { id: trip.id },
+            data: { state: 'COMPLETED' },
+          });
+        }
 
-      // 5. Atualiza estado agregado SEM retroceder.
-      const nextState = this.nextExecutionState(execution.state, dto.type);
-      if (nextState !== execution.state) {
-        await tx.tripExecution.update({
-          where: { id: execution.id },
-          data: this.executionPatch(dto.type, event.serverTimestamp),
-        });
+        return {
+          id: event.id,
+          type: event.type as OperationalEventType,
+          serverTimestamp: event.serverTimestamp,
+          tripExecutionId: event.tripExecutionId,
+          tripExecutionState: nextState,
+          wasDeduped: false,
+        };
+      });
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        // Outro request venceu a corrida. Busca o evento em NOVA transação.
+        const now = await this.lookupByKey(ctx, idempotencyKey);
+        if (!now) throw err;
+        if (
+          now.tripExecution.scheduledTripId !== scheduledTripId ||
+          now.type !== dto.type
+        ) {
+          throw new ConflictException(
+            'Idempotency-Key já usada para outro evento (trip ou type divergem)',
+          );
+        }
+        return {
+          id: now.id,
+          type: now.type as OperationalEventType,
+          serverTimestamp: now.serverTimestamp,
+          tripExecutionId: now.tripExecutionId,
+          tripExecutionState: now.tripExecution.state,
+          wasDeduped: true,
+        };
       }
-      // Sinaliza na ScheduledTrip quando apropriado.
-      if (dto.type === 'TRIP_STARTED' && trip.state !== 'IN_PROGRESS') {
-        await tx.scheduledTrip.update({
-          where: { id: trip.id },
-          data: { state: 'IN_PROGRESS' },
-        });
-      } else if (dto.type === 'TRIP_COMPLETED' && trip.state !== 'COMPLETED') {
-        await tx.scheduledTrip.update({
-          where: { id: trip.id },
-          data: { state: 'COMPLETED' },
-        });
-      }
+      throw err;
+    }
+  }
 
-      return {
-        id: event.id,
-        type: event.type as OperationalEventType,
-        serverTimestamp: event.serverTimestamp,
-        tripExecutionId: event.tripExecutionId,
-        tripExecutionState: nextState,
-        wasDeduped: false,
-      };
-    });
+  private async lookupByKey(
+    ctx: { tenantId: string },
+    idempotencyKey: string,
+  ): Promise<
+    | (NonNullable<Awaited<ReturnType<PrismaClient['operationalEvent']['findUnique']>>> & {
+        tripExecution: { scheduledTripId: string; state: string };
+      })
+    | null
+  > {
+    return this.prisma.withTenantFromCtx(ctx, async (tx) =>
+      tx.operationalEvent.findUnique({
+        where: {
+          tenantId_idempotencyKey: { tenantId: ctx.tenantId, idempotencyKey },
+        },
+        include: { tripExecution: true },
+      }),
+    ) as never;
   }
 
   private nextExecutionState(

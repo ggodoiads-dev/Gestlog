@@ -28,9 +28,39 @@ async function bootstrap(): Promise<void> {
   const doc = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('docs', app, doc);
 
-  const port = Number.parseInt(process.env.API_PORT ?? '4000', 10);
-  await app.listen(port);
-  app.get(Logger).log(`GESTLOG API escutando em http://localhost:${port}`);
+  // Railway seta PORT; API_PORT fica como fallback para dev local.
+  const port = Number.parseInt(process.env.PORT ?? process.env.API_PORT ?? '4000', 10);
+
+  // CORS para a web (Vercel). WEB_ORIGINS é lista separada por vírgula.
+  // Wildcards simples suportados (ex.: "https://gestlog-*.vercel.app").
+  const origins = (process.env.WEB_ORIGINS ?? '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+  if (origins.length > 0) {
+    app.enableCors({
+      origin: (origin, cb) => {
+        if (!origin) return cb(null, true);
+        const allowed = origins.some((pattern) => {
+          if (pattern === origin) return true;
+          if (pattern.includes('*')) {
+            const regex = new RegExp(
+              '^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$',
+            );
+            return regex.test(origin);
+          }
+          return false;
+        });
+        cb(null, allowed);
+      },
+      credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key', 'X-Request-Id'],
+    });
+  }
+
+  await app.listen(port, '0.0.0.0');
+  app.get(Logger).log(`GESTLOG API escutando em porta ${port}`);
 }
 
 bootstrap().catch((err: unknown) => {

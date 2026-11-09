@@ -8,6 +8,7 @@ import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { TenantContextMiddleware } from './auth/tenant-context.middleware';
 import { HealthModule } from './health/health.module';
 import { AutoDispatchModule } from './modules/autodispatch/autodispatch.module';
+import { BillingModule } from './modules/billing/billing.module';
 import { ClientsModule } from './modules/clients/clients.module';
 import { CoreModule } from './modules/core/core.module';
 import { FleetModule } from './modules/fleet/fleet.module';
@@ -58,6 +59,7 @@ import { TenantContextModule } from './tenant-context/tenant-context.module';
     WorkforceModule,
     OperationsModule,
     AutoDispatchModule,
+    BillingModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

@@ -11,7 +11,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  schemas  = ["core", "clients", "clm", "routing", "workforce", "fleet", "operations", "audit"]
+  schemas  = ["core", "clients", "clm", "routing", "workforce", "fleet", "operations", "billing", "audit"]
 }
 
 // ============================================================================
@@ -294,6 +294,10 @@ model Contract {
   status       ContractStatus @default(DRAFT)
   startDate    DateTime? @map("start_date") @db.Date
   endDate      DateTime? @map("end_date") @db.Date
+  // Preço vigente (próximas iterações: mover para PricingComponent por versão).
+  pricingMode  BillingKind? @map("pricing_mode")
+  pricingAmountCents BigInt? @map("pricing_amount_cents")
+  pricingCurrency String @default("BRL") @map("pricing_currency") @db.VarChar(3)
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
@@ -301,6 +305,7 @@ model Contract {
   legalEntity LegalEntity @relation(fields: [legalEntityId], references: [id])
   versions    ContractVersion[]
   routes      Route[]
+  measurements BillingMeasurement[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -759,6 +764,40 @@ enum EventConfidence {
   UNKNOWN
 
   @@schema("operations")
+}
+
+// ============================================================================
+// BILLING — livro de medição contratual (registro canônico transversal #1)
+// ============================================================================
+
+model BillingMeasurement {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  contractId      String   @map("contract_id") @db.Uuid
+  scheduledTripId String?  @map("scheduled_trip_id") @db.Uuid
+  kind            BillingKind
+  competenceYear  Int      @map("competence_year")
+  competenceMonth Int      @map("competence_month") // 1..12
+  quantity        Decimal  @db.Decimal(14, 4)
+  unitPriceCents  BigInt   @map("unit_price_cents")
+  amountCents     BigInt   @map("amount_cents")
+  currency        String   @default("BRL") @db.VarChar(3)
+  evidence        Json? // referências a trips, eventos, ocorrências
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  contract Contract @relation(fields: [contractId], references: [id])
+
+  @@index([tenantId, contractId, competenceYear, competenceMonth])
+  @@index([tenantId, scheduledTripId])
+  @@map("billing_measurements")
+  @@schema("billing")
+}
+
+enum BillingKind {
+  MONTHLY_FIXED
+  PER_TRIP
+
+  @@schema("billing")
 }
 
 // ============================================================================

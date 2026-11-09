@@ -27,7 +27,14 @@ interface TenantSeed {
   legalEntity: { cnpj: string; legalName: string; tradeName: string };
   garage: { name: string };
   adminEmail: string;
-  clients: { legalName: string; cnpj: string; tradeName: string; contractCode: string }[];
+  clients: {
+    legalName: string;
+    cnpj: string;
+    tradeName: string;
+    contractCode: string;
+    pricingMode: 'MONTHLY_FIXED' | 'PER_TRIP';
+    pricingAmountCents: bigint;
+  }[];
 }
 
 const TENANTS: TenantSeed[] = [
@@ -42,8 +49,22 @@ const TENANTS: TenantSeed[] = [
     garage: { name: 'Garagem Central — DEMO' },
     adminEmail: 'admin.pct@demo.gestlog.local',
     clients: [
-      { legalName: 'Fábrica Jandira S/A — DEMO', cnpj: '00000000000272', tradeName: 'Fábrica Jandira — DEMO', contractCode: 'CTR-JDA-001' },
-      { legalName: 'Hospital Alpha Ltda — DEMO', cnpj: '00000000000353', tradeName: 'Hospital Alpha — DEMO', contractCode: 'CTR-ALP-001' },
+      {
+        legalName: 'Fábrica Jandira S/A — DEMO',
+        cnpj: '00000000000272',
+        tradeName: 'Fábrica Jandira — DEMO',
+        contractCode: 'CTR-JDA-001',
+        pricingMode: 'MONTHLY_FIXED',
+        pricingAmountCents: 18_000_00n, // R$ 18.000,00/mês (DEMO)
+      },
+      {
+        legalName: 'Hospital Alpha Ltda — DEMO',
+        cnpj: '00000000000353',
+        tradeName: 'Hospital Alpha — DEMO',
+        contractCode: 'CTR-ALP-001',
+        pricingMode: 'PER_TRIP',
+        pricingAmountCents: 420_00n, // R$ 420,00/viagem (DEMO)
+      },
     ],
   },
   {
@@ -57,8 +78,22 @@ const TENANTS: TenantSeed[] = [
     garage: { name: 'Garagem Norte — DEMO' },
     adminEmail: 'admin.citybus@demo.gestlog.local',
     clients: [
-      { legalName: 'Distrito Industrial LTDA — DEMO', cnpj: '00000000000515', tradeName: 'Distrito Industrial — DEMO', contractCode: 'CTR-DIN-001' },
-      { legalName: 'Call Center Beta S/A — DEMO', cnpj: '00000000000696', tradeName: 'Call Center Beta — DEMO', contractCode: 'CTR-CCB-001' },
+      {
+        legalName: 'Distrito Industrial LTDA — DEMO',
+        cnpj: '00000000000515',
+        tradeName: 'Distrito Industrial — DEMO',
+        contractCode: 'CTR-DIN-001',
+        pricingMode: 'MONTHLY_FIXED',
+        pricingAmountCents: 25_000_00n,
+      },
+      {
+        legalName: 'Call Center Beta S/A — DEMO',
+        cnpj: '00000000000696',
+        tradeName: 'Call Center Beta — DEMO',
+        contractCode: 'CTR-CCB-001',
+        pricingMode: 'PER_TRIP',
+        pricingAmountCents: 350_00n,
+      },
     ],
   },
 ];
@@ -245,6 +280,8 @@ async function seed(prisma: PrismaClient): Promise<void> {
           update: {
             title: `Fretamento corporativo — ${clientSeed.tradeName}`,
             status: 'ACTIVE',
+            pricingMode: clientSeed.pricingMode,
+            pricingAmountCents: clientSeed.pricingAmountCents,
           },
           create: {
             tenantId: tenant.id,
@@ -254,6 +291,8 @@ async function seed(prisma: PrismaClient): Promise<void> {
             title: `Fretamento corporativo — ${clientSeed.tradeName}`,
             status: 'ACTIVE',
             startDate: new Date('2026-01-01T00:00:00Z'),
+            pricingMode: clientSeed.pricingMode,
+            pricingAmountCents: clientSeed.pricingAmountCents,
           },
         });
       }

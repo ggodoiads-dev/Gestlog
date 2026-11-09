@@ -51,7 +51,7 @@
 | 09 | AutoDispatch | `in-progress` | POST /v1/scheduled-trips/:id/assignments + DELETE /v1/assignments/:id. Atomicidade via unique index parcial (state != CANCELLED/SUPERSEDED). Valida elegibilidade de veículo e motorista. |
 | 10 | Operations | `in-progress` | /v1/routes/:id/expand + /v1/scheduled-trips?date. Expansão idempotente; versão imutável: publicação de nova versão não reescreve trips antigas. |
 | 11 | Driver App API | `in-progress` | POST /v1/scheduled-trips/:id/events com Idempotency-Key obrigatório. Dedupe atômico (unique index tenantId+key); TripExecution lazy; estado agregado só avança. |
-| 12 | Billing | `not-started` | |
+| 12 | Billing | `in-progress` | POST /v1/scheduled-trips/:id/validate gera medição conforme Contract.pricingMode (MONTHLY_FIXED/PER_TRIP); unique index parcial garante não-duplicação. GET /v1/billing/pre-invoices/:contractId?year=&month= agrega. |
 | 13 | AR | `not-started` | |
 | 14 | Procurement | `not-started` | |
 | 15 | AP | `not-started` | |
@@ -80,6 +80,7 @@ caso ganha teste automatizado.
 | AT-08 (designação atômica concorrente) | `homologated` | `apps/api/test/autodispatch-concurrency.e2e.spec.ts` — unique index parcial no banco |
 | AT-11 (evento offline enviado duas vezes → 1 fato) | `homologated` | `apps/api/test/driver-events.e2e.spec.ts` — corrida de 5 submissões concorrentes resulta em id único |
 | AT-17 (contrato reajustado preserva histórico) | `in-progress` | versionamento imutável de rotas implementado — AT-17 propriamente dito aguarda `ContractAdjustment` |
+| AT-20 (contrato mensal fixo não gera medição duplicada) | `homologated` | `apps/api/test/billing-measurement.e2e.spec.ts` — unique index parcial por (contract, competência) |
 | AT-35 (rotagrama recorrente estável sem lista diária) | `in-progress` | expansão idempotente validada; publicação de nova versão não reescreve trips passadas — `apps/api/test/routing-versioning.e2e.spec.ts` |
 | AT-03 … AT-41 (demais) | `not-started` | — |
 

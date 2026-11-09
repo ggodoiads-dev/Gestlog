@@ -82,14 +82,41 @@ contratual** até homologação):
 
 ## 6. Deploy
 
-- Containerização via Docker (Dockerfile por app).
+**Topologia aprovada (ADR-0004):**
+
+- **Backend (`apps/api`)** → Railway + Postgres + Redis gerenciados.
+- **Frontend (`apps/web`, `apps/driver`)** → Vercel.
+
+### Railway (API)
+
+- `main.ts` lê `PORT` (convenção Railway) com fallback para `API_PORT` em dev.
+- Variáveis obrigatórias: `DATABASE_URL`, `DATABASE_APP_URL`,
+  `DATABASE_ADMIN_URL`, `REDIS_URL`, `AUTH_SECRET`, `WEB_ORIGINS`.
+- Pre-deploy hook: `pnpm --filter @gestlog/db prisma:migrate:deploy`.
+- Healthcheck: `/health/ready`.
+- CORS: restrito aos domínios de `WEB_ORIGINS`; wildcard para previews
+  da Vercel (`https://gestlog-*.vercel.app`).
+
+### Vercel (Web)
+
+- Diretório raiz do projeto: `apps/web`.
+- Build command: `cd ../.. && pnpm install --frozen-lockfile=false &&
+  pnpm --filter @gestlog/shared build && pnpm --filter @gestlog/web build`.
+- Variáveis: `API_BASE_URL` (Railway), `APP_BASE_URL` (próprio domínio).
+- Preview por PR; produção promovida manualmente até fecharmos o
+  pipeline de release.
+
+### Processo
+
 - Pipeline (GitHub Actions) com estágios: lint → typecheck → unit →
-  integration → migration dry-run → build → push de imagem →
-  deploy (ambiente seguinte).
-- Migrations via Prisma com `migrate deploy`. Nenhuma migration altera
+  integration → migration dry-run → build → deploy Railway (API) +
+  Vercel (web). Deploy em produção exige aprovação manual.
+- Migrations via Prisma `migrate deploy`. Nenhuma migration altera
   dados em produção sem backup/snapshot explícito.
-- Rollback: contêiner de versão anterior; migrations seguem regra de
-  **expansão contraída** (fases: expand → migrate app → contract).
+- Rollback: Railway serve a versão anterior; Vercel promove outra
+  deployment. Migrations seguem **expansão → contração** (fases
+  expand → migrate app → contract).
+- `FEATURE_DEMO_SEEDS=true` **proibido** em produção. CI valida.
 
 ## 7. Runbooks (placeholders)
 
