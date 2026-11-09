@@ -11,7 +11,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  schemas  = ["core", "clients", "clm", "routing", "workforce", "fleet", "operations", "billing", "ar", "procurement", "ap", "governance", "audit"]
+  schemas  = ["core", "clients", "clm", "routing", "workforce", "fleet", "operations", "billing", "ar", "procurement", "ap", "governance", "finance", "audit"]
 }
 
 // ============================================================================
@@ -1043,6 +1043,71 @@ model PaymentAllocation {
   @@index([tenantId, paymentId])
   @@map("payment_allocations")
   @@schema("ap")
+}
+
+// ============================================================================
+// FINANCE — fechamento mensal, DRE, EBITDA (prompt mestre §18, §19)
+// ============================================================================
+
+// Estado de um período (competência) por pessoa jurídica. Fechado = snapshot
+// imutável; novas medições de receita naquela competência são bloqueadas.
+// Reabertura exige motivo e cria uma nova faixa de versionamento.
+model AccountingPeriod {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  legalEntityId  String   @map("legal_entity_id") @db.Uuid
+  year           Int
+  month          Int
+  state          AccountingPeriodState @default(OPEN)
+  closedAt       DateTime? @map("closed_at")
+  closedBy       String?  @map("closed_by") @db.Uuid
+  reopenedAt     DateTime? @map("reopened_at")
+  reopenedBy     String?  @map("reopened_by") @db.Uuid
+  reopenReason   String?  @map("reopen_reason")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  snapshots EBITDASnapshot[]
+
+  @@unique([tenantId, legalEntityId, year, month])
+  @@index([tenantId, state])
+  @@map("accounting_periods")
+  @@schema("finance")
+}
+
+enum AccountingPeriodState {
+  OPEN
+  CLOSING
+  CLOSED
+  REOPENED
+
+  @@schema("finance")
+}
+
+// Snapshot IMUTÁVEL do EBITDA no momento do fechamento. Reabertura NÃO
+// altera snapshots anteriores — cria um novo quando fechar de novo.
+model EBITDASnapshot {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  legalEntityId  String   @map("legal_entity_id") @db.Uuid
+  periodId       String   @map("period_id") @db.Uuid
+  version        Int      // 1 no primeiro fechamento, 2 depois de reopen+close…
+  year           Int
+  month          Int
+  revenueCents   BigInt   @map("revenue_cents")
+  opexCents      BigInt   @map("opex_cents")
+  ebitdaCents    BigInt   @map("ebitda_cents")
+  marginBps      Int      @map("margin_bps") // basis points: 100 = 1%
+  currency       String   @default("BRL") @db.VarChar(3)
+  computedAt     DateTime @default(now()) @map("computed_at")
+  computedBy     String?  @map("computed_by") @db.Uuid
+
+  period AccountingPeriod @relation(fields: [periodId], references: [id])
+
+  @@unique([periodId, version])
+  @@index([tenantId, legalEntityId, year, month])
+  @@map("ebitda_snapshots")
+  @@schema("finance")
 }
 
 // ============================================================================

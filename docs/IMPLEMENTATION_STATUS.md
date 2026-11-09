@@ -56,6 +56,7 @@
 | 24 | Governance / Approvals | `in-progress` | POST /v1/approvals + /decisions com SoD obrigatória (sem autoaprovação), sem aprovação tácita, decisão idempotente por aprovador. REJECT fecha pedido imediatamente; APPROVE só fecha ao atingir `requiredApprovals`. Delegation modelada; endpoints de delegação virão com plantão/alçada. |
 | 14 | Procurement | `in-progress` | POST /v1/purchase-orders + /receipts com overreceive bloqueado; vínculo opcional a ApprovalRequest (APPROVED). Status OPEN → PARTIALLY_RECEIVED → RECEIVED. |
 | 15 | AP | `in-progress` | POST /v1/payables (3-way grosseiro: fatura ≤ recebido) + /payments com Idempotency-Key. **externalStatus=UNKNOWN NÃO atualiza saldo** (§27 prompt); replay dedupe; overpayment → 409. |
+| 18 | Finance (DRE/EBITDA) | `in-progress` | GET /v1/finance/dre com modo `live` ou `snapshot`. POST /v1/finance/periods/.../close cria `EBITDASnapshot` imutável e bloqueia novas medições naquela competência (via guard no BillingService). POST .../reopen com motivo preserva snapshot antigo; nova versão é criada no próximo close. Opex ainda consolidado por tenant (separação por LegalEntity vem com GL completo). |
 | 16 | Treasury | `not-started` | |
 | 17 | Budget & Performance | `not-started` | |
 | 18 | Finance (DRE/EBITDA) | `not-started` | |
@@ -83,6 +84,7 @@ caso ganha teste automatizado.
 | AT-11 (evento offline enviado duas vezes → 1 fato) | `homologated` | `apps/api/test/driver-events.e2e.spec.ts` — corrida de 5 submissões concorrentes resulta em id único |
 | AT-16 (pedido parcial recebido/faturado/pago não duplica) | `homologated` | `apps/api/test/procurement-ap.e2e.spec.ts` — 12 testes cobrindo overreceive, 3-way grosseiro, overpayment, UNKNOWN sem efeito, replay |
 | AT-17 (status bancário desconhecido não gera retry cego) | `homologated` | mesmo arquivo — UNKNOWN registra fato mas mantém saldo intacto |
+| AT-26 (competência fechada bloqueia mutação silenciosa) | `homologated` | `apps/api/test/finance-close.e2e.spec.ts` — guard no BillingService + snapshot imutável + reopen com motivo preservando v1 |
 | AT-17 (contrato reajustado preserva histórico) | `in-progress` | versionamento imutável de rotas implementado — AT-17 propriamente dito aguarda `ContractAdjustment` |
 | AT-20 (contrato mensal fixo não gera medição duplicada) | `homologated` | `apps/api/test/billing-measurement.e2e.spec.ts` — unique index parcial por (contract, competência) |
 | AT-35 (rotagrama recorrente estável sem lista diária) | `in-progress` | expansão idempotente validada; publicação de nova versão não reescreve trips passadas — `apps/api/test/routing-versioning.e2e.spec.ts` |

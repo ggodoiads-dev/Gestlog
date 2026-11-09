@@ -143,6 +143,9 @@ const SYSTEM_ROLES: {
       'ap.payables.read',
       'ap.payables.manage',
       'ap.payments.execute',
+      'finance.periods.read',
+      'finance.periods.close',
+      'finance.periods.reopen',
     ],
   },
   {

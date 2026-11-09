@@ -7,6 +7,7 @@ import {
 import type { PrismaClient } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { FinanceService } from '../finance/finance.service';
 
 interface ValidatedTripResult {
   tripId: string;
@@ -56,7 +57,10 @@ interface PreInvoice {
  */
 @Injectable()
 export class BillingService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly finance: FinanceService,
+  ) {}
 
   async validateAndMeasure(
     ctx: { tenantId: string; userId: string },
@@ -89,6 +93,18 @@ export class BillingService {
 
       const wasAlreadyValidated = trip.execution?.validated === true;
 
+      // Competência da viagem. Se o período já foi fechado, bloqueia ANTES
+      // de criar qualquer fato — prompt mestre §18 (fechamento imutável).
+      const competenceYear = trip.operationalDate.getUTCFullYear();
+      const competenceMonth = trip.operationalDate.getUTCMonth() + 1;
+      await this.finance.ensurePeriodOpenInTx(
+        tx,
+        ctx.tenantId,
+        contract.legalEntityId,
+        competenceYear,
+        competenceMonth,
+      );
+
       // Garante TripExecution + marca como validada (idempotente).
       const execution = await tx.tripExecution.upsert({
         where: { scheduledTripId },
@@ -107,9 +123,6 @@ export class BillingService {
       void execution;
 
       // Gera medição conforme pricingMode.
-      const competenceYear = trip.operationalDate.getUTCFullYear();
-      const competenceMonth = trip.operationalDate.getUTCMonth() + 1;
-
       if (contract.pricingMode === 'PER_TRIP') {
         const measurement = await this.upsertPerTripMeasurement(
           tx,
