@@ -53,6 +53,7 @@
 | 11 | Driver App API | `in-progress` | POST /v1/scheduled-trips/:id/events com Idempotency-Key obrigatório. Dedupe atômico (unique index tenantId+key); TripExecution lazy; estado agregado só avança. |
 | 12 | Billing | `in-progress` | POST /v1/scheduled-trips/:id/validate gera medição conforme Contract.pricingMode (MONTHLY_FIXED/PER_TRIP); unique index parcial garante não-duplicação. GET /v1/billing/pre-invoices/:contractId?year=&month= agrega. |
 | 13 | AR | `in-progress` | Emissão de Receivable + POST /v1/receivables/:id/receipts com Idempotency-Key obrigatório. Alocação 1:1, parcial e total; overpayment → 409; status OPEN → PARTIALLY_PAID → PAID derivado; N:M (rateio entre títulos) e conciliação OFX virão em fatia seguinte. |
+| 24 | Governance / Approvals | `in-progress` | POST /v1/approvals + /decisions com SoD obrigatória (sem autoaprovação), sem aprovação tácita, decisão idempotente por aprovador. REJECT fecha pedido imediatamente; APPROVE só fecha ao atingir `requiredApprovals`. Delegation modelada; endpoints de delegação virão com plantão/alçada. |
 | 14 | Procurement | `not-started` | |
 | 15 | AP | `not-started` | |
 | 16 | Treasury | `not-started` | |
@@ -76,7 +77,8 @@ caso ganha teste automatizado.
 | AT | Estado | Teste |
 |----|--------|-------|
 | AT-01 (tenants não vazam entre si) | `homologated` | `apps/api/test/tenant-isolation.e2e.spec.ts` |
-| AT-02 (usuário sem autoridade não aprova) | `in-progress` | guard RBAC implementado; aprovações viram no módulo Governance |
+| AT-02 (usuário sem autoridade não aprova) | `homologated` | `apps/api/test/governance-approvals.e2e.spec.ts` — viewer recebe 403 mesmo via HTTP direto |
+| AT-03 (solicitante não aprova o próprio objeto) | `homologated` | `apps/api/test/governance-approvals.e2e.spec.ts` — requestedBy === approverId → 403 |
 | AT-08 (designação atômica concorrente) | `homologated` | `apps/api/test/autodispatch-concurrency.e2e.spec.ts` — unique index parcial no banco |
 | AT-11 (evento offline enviado duas vezes → 1 fato) | `homologated` | `apps/api/test/driver-events.e2e.spec.ts` — corrida de 5 submissões concorrentes resulta em id único |
 | AT-17 (contrato reajustado preserva histórico) | `in-progress` | versionamento imutável de rotas implementado — AT-17 propriamente dito aguarda `ContractAdjustment` |

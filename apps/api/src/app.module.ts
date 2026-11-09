@@ -14,6 +14,7 @@ import { ClientsModule } from './modules/clients/clients.module';
 import { ClmModule } from './modules/clm/clm.module';
 import { CoreModule } from './modules/core/core.module';
 import { FleetModule } from './modules/fleet/fleet.module';
+import { GovernanceModule } from './modules/governance/governance.module';
 import { OperationsModule } from './modules/operations/operations.module';
 import { RoutingModule } from './modules/routing/routing.module';
 import { WorkforceModule } from './modules/workforce/workforce.module';
@@ -64,6 +65,7 @@ import { TenantContextModule } from './tenant-context/tenant-context.module';
     AutoDispatchModule,
     BillingModule,
     ArModule,
+    GovernanceModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

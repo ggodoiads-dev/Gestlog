@@ -11,7 +11,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  schemas  = ["core", "clients", "clm", "routing", "workforce", "fleet", "operations", "billing", "ar", "audit"]
+  schemas  = ["core", "clients", "clm", "routing", "workforce", "fleet", "operations", "billing", "ar", "governance", "audit"]
 }
 
 // ============================================================================
@@ -886,6 +886,94 @@ enum ReceivableStatus {
   WRITTEN_OFF
 
   @@schema("ar")
+}
+
+// ============================================================================
+// GOVERNANCE — aprovações, delegações, alçadas (prompt mestre §15)
+// ============================================================================
+
+// Pedido de aprovação sobre um "subject" (compra, pagamento, reajuste, etc).
+// O snapshot do objeto é imutável; mudança material invalida a aprovação
+// (tratado em serviço — ver ApprovalsService).
+model ApprovalRequest {
+  id              String @id @default(uuid()) @db.Uuid
+  tenantId        String @map("tenant_id") @db.Uuid
+  subjectType     String @map("subject_type") // payment, pricing, contract, capex, asset_sale...
+  subjectId       String @map("subject_id") @db.Uuid
+  subjectVersion  Int    @default(1) @map("subject_version")
+  requestedBy     String @map("requested_by") @db.Uuid
+  reason          String // obrigatório para auditoria
+  amountCents     BigInt? @map("amount_cents") // valor envolvido (quando aplicável)
+  currency        String? @db.VarChar(3)
+  snapshotJson    Json   @map("snapshot_json") // estado do subject NO MOMENTO do pedido
+  state           ApprovalState @default(PENDING)
+  requiredApprovals Int @default(1) @map("required_approvals")
+  decidedAt       DateTime? @map("decided_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  steps ApprovalStep[]
+
+  @@index([tenantId, state])
+  @@index([tenantId, subjectType, subjectId])
+  @@map("approval_requests")
+  @@schema("governance")
+}
+
+enum ApprovalState {
+  PENDING
+  APPROVED
+  REJECTED
+  RETURNED
+  CANCELLED
+  SUPERSEDED
+
+  @@schema("governance")
+}
+
+model ApprovalStep {
+  id            String  @id @default(uuid()) @db.Uuid
+  tenantId      String  @map("tenant_id") @db.Uuid
+  requestId     String  @map("request_id") @db.Uuid
+  approverId    String  @map("approver_id") @db.Uuid
+  decision      ApprovalDecision
+  comment       String?
+  decidedAt     DateTime @default(now()) @map("decided_at")
+
+  request ApprovalRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@unique([requestId, approverId])
+  @@index([tenantId, requestId])
+  @@map("approval_steps")
+  @@schema("governance")
+}
+
+enum ApprovalDecision {
+  APPROVE
+  REJECT
+  RETURN
+
+  @@schema("governance")
+}
+
+// Delegação PLANEJADA: titular nomeia substituto com escopo e vigência.
+// Delegação EMERGENCIAL vem numa fatia futura (exige segunda aprovação
+// antes de ativar, prompt mestre §15).
+model Delegation {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  delegatorId    String   @map("delegator_id") @db.Uuid
+  delegateId     String   @map("delegate_id") @db.Uuid
+  scope          String   // ex.: "approvals.payment", "approvals.contract"
+  maxAmountCents BigInt?  @map("max_amount_cents")
+  validFrom      DateTime @map("valid_from")
+  validUntil     DateTime @map("valid_until")
+  revokedAt      DateTime? @map("revoked_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, delegateId, validFrom, validUntil])
+  @@map("delegations")
+  @@schema("governance")
 }
 
 // ============================================================================

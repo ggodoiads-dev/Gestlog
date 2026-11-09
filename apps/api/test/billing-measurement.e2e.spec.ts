@@ -27,8 +27,8 @@ let perTripContractId: string;
 let monthlyRouteId: string;
 let perTripRouteId: string;
 
-const YEAR = 2050 + (process.pid % 30);
 const RUN_ID = Date.now();
+const YEAR = 2095 + (Math.floor(RUN_ID / 1000) % 5);
 
 async function login(): Promise<string> {
   const res = await request(app.getHttpServer())

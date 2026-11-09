@@ -133,6 +133,10 @@ const SYSTEM_ROLES: {
       'ar.receivables.read',
       'ar.receivables.issue',
       'ar.receivables.write',
+      'governance.approvals.request',
+      'governance.approvals.decide',
+      'governance.approvals.read',
+      'governance.delegations.manage',
     ],
   },
   {
@@ -150,6 +154,17 @@ const SYSTEM_ROLES: {
       'operations.trips.read',
       'operations.trips.dispatch',
       'operations.trips.validate',
+    ],
+  },
+  {
+    code: 'finance_approver',
+    name: 'Aprovador financeiro',
+    description: 'Decide pedidos de aprovação financeiros (não cria).',
+    permissions: [
+      'clm.contracts.read',
+      'ar.receivables.read',
+      'governance.approvals.read',
+      'governance.approvals.decide',
     ],
   },
   {
@@ -258,6 +273,50 @@ async function seed(prisma: PrismaClient): Promise<void> {
           userId: admin.id,
           roleId: adminRoleId,
         },
+      });
+
+      // Aprovador financeiro (SoD: independente do admin que faz pedidos).
+      const approverEmail = tenantSeed.adminEmail.replace('admin.', 'approver.');
+      const approver = await tx.user.upsert({
+        where: { tenantId_email: { tenantId: tenant.id, email: approverEmail } },
+        update: { passwordHash, status: 'ACTIVE' },
+        create: {
+          tenantId: tenant.id,
+          email: approverEmail,
+          fullName: 'Aprovador DEMO',
+          passwordHash,
+          status: 'ACTIVE',
+        },
+      });
+      const approverRoleId = roleByCode.get('finance_approver')?.id;
+      if (!approverRoleId) throw new Error('role finance_approver ausente');
+      await tx.userRole.deleteMany({ where: { userId: approver.id } });
+      await tx.userRole.create({
+        data: {
+          tenantId: tenant.id,
+          userId: approver.id,
+          roleId: approverRoleId,
+        },
+      });
+
+      // Viewer (perfil sem permissão de decidir).
+      const viewerEmail = tenantSeed.adminEmail.replace('admin.', 'viewer.');
+      const viewer = await tx.user.upsert({
+        where: { tenantId_email: { tenantId: tenant.id, email: viewerEmail } },
+        update: { passwordHash, status: 'ACTIVE' },
+        create: {
+          tenantId: tenant.id,
+          email: viewerEmail,
+          fullName: 'Viewer DEMO',
+          passwordHash,
+          status: 'ACTIVE',
+        },
+      });
+      const viewerRoleId = roleByCode.get('viewer')?.id;
+      if (!viewerRoleId) throw new Error('role viewer ausente');
+      await tx.userRole.deleteMany({ where: { userId: viewer.id } });
+      await tx.userRole.create({
+        data: { tenantId: tenant.id, userId: viewer.id, roleId: viewerRoleId },
       });
 
       // Clientes corporativos + contrato DEMO vinculado à primeira pessoa jurídica.

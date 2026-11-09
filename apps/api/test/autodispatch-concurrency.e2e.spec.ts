@@ -35,8 +35,8 @@ let expiredLicenseDriverId: string;
 // Cada run do teste trabalha em um ano próprio e com um código de rota
 // com timestamp — evita colisão tanto com outros arquivos E2E quanto com
 // execuções anteriores que deixaram dados no banco.
-const YEAR = 2030 + (process.pid % 50);
 const RUN_ID = Date.now();
+const YEAR = 2030 + (Math.floor(RUN_ID / 1000) % 50);
 const ROUTE_CODE = `R-AT08-${RUN_ID}`;
 const d = (dayOfMonth: number): string =>
   `${YEAR}-01-${String(dayOfMonth).padStart(2, '0')}`;

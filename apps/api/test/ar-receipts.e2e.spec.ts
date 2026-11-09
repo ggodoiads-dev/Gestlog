@@ -25,8 +25,8 @@ let contractId: string;
 let receivableA: string;
 let receivableB: string;
 
-const YEAR = 2080 + (process.pid % 15);
 const RUN_ID = Date.now();
+const YEAR = 2015 + (Math.floor(RUN_ID / 1000) % 15);
 
 async function login(): Promise<string> {
   const res = await request(app.getHttpServer())

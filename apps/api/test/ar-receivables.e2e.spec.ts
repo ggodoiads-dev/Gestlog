@@ -24,8 +24,11 @@ let tokenB: string;
 let contractId: string;
 let routeId: string;
 
-const YEAR = 2070 + (process.pid % 20);
+// YEAR precisa ser único entre runs porque o unique de Receivable é
+// (tenant, contract, year, month). Dois runs do CI no mesmo ano
+// usariam o mesmo receivable da rodada anterior.
 const RUN_ID = Date.now();
+const YEAR = 2040 + (Math.floor(RUN_ID / 1000) % 60);
 
 async function login(email: string): Promise<string> {
   const res = await request(app.getHttpServer())

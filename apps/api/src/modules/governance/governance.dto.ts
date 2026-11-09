@@ -1,0 +1,21 @@
+import { z } from 'zod';
+
+export const createApprovalSchema = z.object({
+  subjectType: z.string().min(2).max(60),
+  subjectId: z.string().uuid(),
+  subjectVersion: z.number().int().positive().default(1),
+  reason: z.string().min(3).max(1000),
+  amountCents: z.coerce.bigint().positive().optional(),
+  currency: z.string().length(3).optional(),
+  requiredApprovals: z.number().int().positive().max(5).default(1),
+  snapshot: z.record(z.unknown()),
+});
+
+export type CreateApprovalDto = z.infer<typeof createApprovalSchema>;
+
+export const decisionSchema = z.object({
+  decision: z.enum(['APPROVE', 'REJECT', 'RETURN']),
+  comment: z.string().max(1000).optional(),
+});
+
+export type DecisionDto = z.infer<typeof decisionSchema>;

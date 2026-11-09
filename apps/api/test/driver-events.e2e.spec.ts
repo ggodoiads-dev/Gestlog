@@ -25,8 +25,8 @@ let app: INestApplication;
 let token: string;
 let tripId: string;
 
-const YEAR = 2040 + (process.pid % 30);
 const RUN_ID = Date.now();
+const YEAR = 2005 + (Math.floor(RUN_ID / 1000) % 10);
 const ROUTE_CODE = `R-AT11-${RUN_ID}`;
 
 async function login(): Promise<string> {
