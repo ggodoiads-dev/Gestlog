@@ -81,6 +81,7 @@ caso ganha teste automatizado.
 | AT-02 (usuário sem autoridade não aprova) | `homologated` | `apps/api/test/governance-approvals.e2e.spec.ts` — viewer recebe 403 mesmo via HTTP direto |
 | AT-03 (solicitante não aprova o próprio objeto) | `homologated` | `apps/api/test/governance-approvals.e2e.spec.ts` — requestedBy === approverId → 403 |
 | AT-04 (jornada do motorista: 10h/dia, 44h/semana) | `homologated` | `apps/api/test/compliance-journey.e2e.spec.ts` — ComplianceService.checkJourneyInTx bloqueia antes do insert, retorna código estruturado por violação |
+| AT-05 (descanso interjornada: ≥ 11h entre jornadas de dias distintos) | `homologated` | `apps/api/test/compliance-journey.e2e.spec.ts` — gap de 4h bloqueia com `INTERJOURNEY_REST`, gap de 12h passa; jornada = envelope das trips do dia-UTC (viagens do mesmo dia são UMA jornada) |
 | AT-08 (designação atômica concorrente) | `homologated` | `apps/api/test/autodispatch-concurrency.e2e.spec.ts` — unique index parcial no banco |
 | AT-11 (evento offline enviado duas vezes → 1 fato) | `homologated` | `apps/api/test/driver-events.e2e.spec.ts` — corrida de 5 submissões concorrentes resulta em id único |
 | AT-16 (pedido parcial recebido/faturado/pago não duplica) | `homologated` | `apps/api/test/procurement-ap.e2e.spec.ts` — 12 testes cobrindo overreceive, 3-way grosseiro, overpayment, UNKNOWN sem efeito, replay |

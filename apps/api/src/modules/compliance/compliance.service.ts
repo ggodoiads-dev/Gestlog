@@ -4,18 +4,18 @@ import type { PrismaClient } from '@prisma/client';
 /**
  * Serviço de compliance trabalhista para designação de motoristas.
  *
- * Fatia atual (AT-04): jornada do motorista.
- *
  * Regras aplicadas:
- *   - Jornada diária: máximo 10h de direção no mesmo dia-calendário UTC
- *     (Lei do Motorista 13.103/2015).
- *   - Jornada semanal: máximo 44h em janela deslizante de 7 dias
+ *   - AT-04 jornada diária: máximo 10h de direção no mesmo dia-calendário
+ *     UTC (Lei do Motorista 13.103/2015).
+ *   - AT-04 jornada semanal: máximo 44h em janela deslizante de 7 dias
  *     terminando no fim da designação proposta (CLT art. 58).
+ *   - AT-05 descanso interjornada: no mínimo 11h de gap entre a chegada
+ *     de uma designação e a saída da seguinte (mesmo motorista), em
+ *     qualquer direção temporal (CLT art. 66, Lei 13.103/2015 art. 67-A).
  *
  * As durações são computadas a partir da janela planejada da ScheduledTrip
- * (plannedDeparture → plannedArrival). AT-05 (intervalo interjornada) e
- * AT-06 (exclusividade de veículo) ficam em fatias próprias e reusam este
- * serviço como ponto único de verificação.
+ * (plannedDeparture → plannedArrival). AT-06 (exclusividade de veículo em
+ * slot) fica em fatia própria e reusa este serviço como ponto único.
  *
  * Importante: o guard NÃO altera dados. Ele retorna um resultado estruturado
  * para que o chamador escolha como reagir (bloquear, avisar, auditar).
@@ -23,6 +23,7 @@ import type { PrismaClient } from '@prisma/client';
 
 export const JOURNEY_DAILY_LIMIT_HOURS = 10;
 export const JOURNEY_WEEKLY_LIMIT_HOURS = 44;
+export const INTERJOURNEY_REST_MIN_HOURS = 11;
 
 const EPS = 1e-6;
 const MS_PER_HOUR = 3_600_000;
@@ -35,7 +36,10 @@ export interface JourneyCheckInput {
   excludeAssignmentId?: string;
 }
 
-export type JourneyViolationCode = 'JOURNEY_DAILY_LIMIT' | 'JOURNEY_WEEKLY_LIMIT';
+export type JourneyViolationCode =
+  | 'JOURNEY_DAILY_LIMIT'
+  | 'JOURNEY_WEEKLY_LIMIT'
+  | 'INTERJOURNEY_REST';
 
 export interface JourneyViolation {
   code: JourneyViolationCode;
@@ -155,6 +159,51 @@ export class ComplianceService {
         windowStart: weekStart.toISOString(),
         windowEnd: input.endAt.toISOString(),
       });
+    }
+
+    // AT-05 — descanso interjornada. Uma "jornada" aqui é o envelope
+    // [min(start), max(end)] das viagens de um motorista num mesmo dia
+    // UTC — várias viagens num dia formam UMA jornada com pausas
+    // intrajornada (não interjornada). O gap entre jornadas de dias
+    // distintos deve ser ≥ 11h.
+    const allTrips = [
+      ...existing.map((a) => ({
+        start: a.scheduledTrip.plannedDeparture,
+        end: a.scheduledTrip.plannedArrival,
+      })),
+      { start: input.startAt, end: input.endAt },
+    ];
+    const byDay = new Map<string, { start: Date; end: Date }>();
+    for (const t of allTrips) {
+      const key = utcDayStart(t.start).toISOString();
+      const cur = byDay.get(key);
+      if (!cur) {
+        byDay.set(key, { start: t.start, end: t.end });
+      } else {
+        if (t.start < cur.start) cur.start = t.start;
+        if (t.end > cur.end) cur.end = t.end;
+      }
+    }
+    const journeys = [...byDay.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map((e) => e[1]);
+    // Encontramos o par consecutivo que envolve a proposta (um dos dois
+    // lados é o dia do input). Se há mais de um par com gap curto, cada
+    // um vira uma violação.
+    for (let i = 1; i < journeys.length; i++) {
+      const prev = journeys[i - 1];
+      const curr = journeys[i];
+      if (!prev || !curr) continue;
+      const gap = hoursBetween(prev.end, curr.start);
+      if (gap < INTERJOURNEY_REST_MIN_HOURS - EPS) {
+        violations.push({
+          code: 'INTERJOURNEY_REST',
+          limitHours: INTERJOURNEY_REST_MIN_HOURS,
+          actualHours: round2(gap),
+          windowStart: prev.end.toISOString(),
+          windowEnd: curr.start.toISOString(),
+        });
+      }
     }
 
     return { ok: violations.length === 0, violations };

@@ -37,6 +37,15 @@ let weeklyDriverId: string;
 let weeklyVehicleId: string;
 const weeklyTripIds: string[] = []; // 6 trips, dias 10..15
 
+// Driver C + rota com 2 turnos (cenário INTERJORNADA, dias 20 e 21).
+let restDriverId: string;
+let restVehicleId: string;
+let restTripIds: { day20Night: string; day21Dawn: string; day21Morning: string } = {
+  day20Night: '',
+  day21Dawn: '',
+  day21Morning: '',
+};
+
 const RUN_ID = Date.now();
 // Ano distante dos outros arquivos E2E (AT-08 usa 2030..2080; AT-20 e
 // AT-26 ficam no mesmo range). Aqui vamos para 2140+.
@@ -205,6 +214,73 @@ beforeAll(async () => {
     weeklyTripIds.push(tripsWeek[i].id);
   }
 
+  // ---------- Rota do cenário interjornada (2 turnos × 2 dias) ------------
+  const REST_ROUTE = `R-AT05-${RUN_ID}`;
+  const resRr = await request(app.getHttpServer())
+    .post('/v1/routes')
+    .set('Authorization', `Bearer ${token}`)
+    .send({ contractId, code: REST_ROUTE, name: 'Rota AT-05', direction: 'IDA' })
+    .expect(201);
+  const restRouteId: string = resRr.body.id;
+
+  const resVr = await request(app.getHttpServer())
+    .post(`/v1/routes/${restRouteId}/versions`)
+    .set('Authorization', `Bearer ${token}`)
+    .send({
+      effectiveFrom: `${YEAR}-01-20`,
+      targetArrivalOffsetMin: 10,
+      maxWalkMeters: 500,
+      stops: [
+        { sequence: 1, name: 'A', latitude: -23.5, longitude: -46.6, offsetMinutes: -30 },
+        { sequence: 2, name: 'B', latitude: -23.6, longitude: -46.7, offsetMinutes: 0 },
+      ],
+      turns: [
+        { label: 'Manhã', targetArrivalTime: '06:00', daysOfWeek: [1, 2, 3, 4, 5, 6, 7] },
+        { label: 'Noite', targetArrivalTime: '20:00', daysOfWeek: [1, 2, 3, 4, 5, 6, 7] },
+      ],
+    })
+    .expect(201);
+  const restVersionId: string = resVr.body.id;
+
+  await request(app.getHttpServer())
+    .post(`/v1/routes/${restRouteId}/versions/${restVersionId}/publish`)
+    .set('Authorization', `Bearer ${token}`)
+    .expect(200);
+
+  await request(app.getHttpServer())
+    .post(`/v1/routes/${restRouteId}/expand`)
+    .set('Authorization', `Bearer ${token}`)
+    .send({ fromDate: `${YEAR}-01-20`, toDate: `${YEAR}-01-21` })
+    .expect(200);
+
+  // 4 trips (2 por dia). Reescreve janelas:
+  //   Day 20 Noite:   18:00-22:00 (fim da jornada do dia 20)
+  //   Day 21 Madrug.: 02:00-04:00 (gap de 4h → INTERJOURNEY_REST)
+  //   Day 21 Manhã:   10:00-14:00 (gap de 12h a partir do dia 20 → ok)
+  //   Day 20 Manhã não será usada (deixamos existir, mas nenhum teste designa).
+  const tripsRest = await prisma.scheduledTrip.findMany({
+    where: { routeVersionId: restVersionId },
+    orderBy: [{ operationalDate: 'asc' }, { plannedDeparture: 'asc' }],
+  });
+  // Ordem: [Day20-Manhã, Day20-Noite, Day21-Manhã, Day21-Noite]
+  await prisma.scheduledTrip.update({
+    where: { id: tripsRest[1].id },
+    data: { plannedDeparture: iso(YEAR, 1, 20, 18), plannedArrival: iso(YEAR, 1, 20, 22) },
+  });
+  await prisma.scheduledTrip.update({
+    where: { id: tripsRest[2].id },
+    data: { plannedDeparture: iso(YEAR, 1, 21, 2), plannedArrival: iso(YEAR, 1, 21, 4) },
+  });
+  await prisma.scheduledTrip.update({
+    where: { id: tripsRest[3].id },
+    data: { plannedDeparture: iso(YEAR, 1, 21, 10), plannedArrival: iso(YEAR, 1, 21, 14) },
+  });
+  restTripIds = {
+    day20Night: tripsRest[1].id,
+    day21Dawn: tripsRest[2].id,
+    day21Morning: tripsRest[3].id,
+  };
+
   // ---------- Veículos + motoristas ---------------------------------------
   const resVehD = await request(app.getHttpServer())
     .post('/v1/vehicles')
@@ -264,6 +340,35 @@ beforeAll(async () => {
     .expect(201);
   weeklyDriverId = resDrvW.body.id;
 
+  const resVehR = await request(app.getHttpServer())
+    .post('/v1/vehicles')
+    .set('Authorization', `Bearer ${token}`)
+    .send({
+      internalCode: `V-AT05-${RUN_ID}`,
+      licensePlate: randomPlate('MNO'),
+      category: 'BUS',
+      seats: 44,
+    })
+    .expect(201);
+  restVehicleId = resVehR.body.id;
+
+  const cpfR = cpfFor(2);
+  const resDrvR = await request(app.getHttpServer())
+    .post('/v1/drivers')
+    .set('Authorization', `Bearer ${token}`)
+    .send({
+      fullName: 'Motorista Descanso AT05',
+      cpf: cpfR,
+      license: {
+        category: 'D',
+        number: `CNH${cpfR}`,
+        issuedAt: `${YEAR - 1}-01-01`,
+        validUntil: `${YEAR + 5}-12-31`,
+      },
+    })
+    .expect(201);
+  restDriverId = resDrvR.body.id;
+
   await prisma.$disconnect();
 });
 
@@ -321,5 +426,35 @@ describe('AT-04 — jornada semanal (janela deslizante de 7 dias)', () => {
 
     const body = res.body as { code?: string };
     expect(body.code).toBe('JOURNEY_WEEKLY_LIMIT');
+  });
+});
+
+describe('AT-05 — descanso interjornada (11h)', () => {
+  it('aceita a jornada do dia 20 (18-22) como ponto de partida', async () => {
+    await request(app.getHttpServer())
+      .post(`/v1/scheduled-trips/${restTripIds.day20Night}/assignments`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ vehicleId: restVehicleId, driverId: restDriverId })
+      .expect(201);
+  });
+
+  it('rejeita jornada do dia 21 começando às 02:00 (gap 4h < 11h)', async () => {
+    const res = await request(app.getHttpServer())
+      .post(`/v1/scheduled-trips/${restTripIds.day21Dawn}/assignments`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ vehicleId: restVehicleId, driverId: restDriverId })
+      .expect(403);
+
+    const body = res.body as { code?: string; violations?: { actualHours: number }[] };
+    expect(body.code).toBe('INTERJOURNEY_REST');
+    expect(body.violations?.[0]?.actualHours).toBe(4);
+  });
+
+  it('aceita jornada do dia 21 começando às 10:00 (gap 12h ≥ 11h)', async () => {
+    await request(app.getHttpServer())
+      .post(`/v1/scheduled-trips/${restTripIds.day21Morning}/assignments`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ vehicleId: restVehicleId, driverId: restDriverId })
+      .expect(201);
   });
 });
