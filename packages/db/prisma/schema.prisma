@@ -812,6 +812,8 @@ model Receivable {
   competenceYear  Int      @map("competence_year")
   competenceMonth Int      @map("competence_month")
   amountCents     BigInt   @map("amount_cents")
+  // Soma das alocações; mantida pela aplicação em transação atômica.
+  paidCents       BigInt   @default(0) @map("paid_cents")
   currency        String   @default("BRL") @db.VarChar(3)
   status          ReceivableStatus @default(OPEN)
   issuedAt        DateTime @default(now()) @map("issued_at")
@@ -820,10 +822,59 @@ model Receivable {
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
+  allocations ReceiptAllocation[]
+
   @@unique([tenantId, contractId, competenceYear, competenceMonth])
   @@index([tenantId, clientId])
   @@index([tenantId, status, dueDate])
   @@map("receivables")
+  @@schema("ar")
+}
+
+model Receipt {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  idempotencyKey  String   @map("idempotency_key")
+  source          ReceiptSource @default(MANUAL)
+  receivedAt      DateTime @map("received_at")
+  amountCents     BigInt   @map("amount_cents")
+  currency        String   @default("BRL") @db.VarChar(3)
+  reference       String?  // ex.: linha OFX, nosso número, PIX endtoend
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  allocations ReceiptAllocation[]
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, receivedAt])
+  @@map("receipts")
+  @@schema("ar")
+}
+
+enum ReceiptSource {
+  MANUAL
+  BANK_OFX
+  BANK_API
+  PIX
+
+  @@schema("ar")
+}
+
+// Alocação N:M entre Receipt e Receivable. Permite:
+//   - pagamento parcial (receipt cobre fração do receivable);
+//   - pagamento consolidado (um receipt quita múltiplos receivables).
+model ReceiptAllocation {
+  id            String  @id @default(uuid()) @db.Uuid
+  tenantId      String  @map("tenant_id") @db.Uuid
+  receiptId     String  @map("receipt_id") @db.Uuid
+  receivableId  String  @map("receivable_id") @db.Uuid
+  amountCents   BigInt  @map("amount_cents")
+
+  receipt    Receipt    @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  receivable Receivable @relation(fields: [receivableId], references: [id])
+
+  @@index([tenantId, receivableId])
+  @@index([tenantId, receiptId])
+  @@map("receipt_allocations")
   @@schema("ar")
 }
 
