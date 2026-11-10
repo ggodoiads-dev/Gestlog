@@ -306,11 +306,37 @@ model Contract {
   versions    ContractVersion[]
   routes      Route[]
   measurements BillingMeasurement[]
+  adjustments ContractAdjustment[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
   @@index([clientId])
   @@map("contracts")
+  @@schema("clm")
+}
+
+// AT-21: reajuste de preço no meio do período preserva o preço anterior
+// para medições já geradas. O billing consulta o adjustment vigente na
+// competência (effectiveFrom <= último dia da competência).
+model ContractAdjustment {
+  id                 String   @id @default(uuid()) @db.Uuid
+  tenantId           String   @map("tenant_id") @db.Uuid
+  contractId         String   @map("contract_id") @db.Uuid
+  effectiveFrom      DateTime @map("effective_from") @db.Date
+  oldPricingMode     BillingKind? @map("old_pricing_mode")
+  oldPricingAmountCents BigInt? @map("old_pricing_amount_cents")
+  newPricingMode     BillingKind @map("new_pricing_mode")
+  newPricingAmountCents BigInt @map("new_pricing_amount_cents")
+  currency           String   @default("BRL") @db.VarChar(3)
+  reason             String
+  decidedBy          String   @map("decided_by") @db.Uuid
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  contract Contract @relation(fields: [contractId], references: [id])
+
+  @@unique([tenantId, contractId, effectiveFrom])
+  @@index([tenantId, contractId, effectiveFrom])
+  @@map("contract_adjustments")
   @@schema("clm")
 }
 

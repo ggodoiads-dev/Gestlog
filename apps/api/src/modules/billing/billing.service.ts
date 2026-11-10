@@ -7,6 +7,7 @@ import {
 import type { PrismaClient } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { ContractsService } from '../clm/contracts.service';
 import { FinanceService } from '../finance/finance.service';
 
 interface ValidatedTripResult {
@@ -60,6 +61,7 @@ export class BillingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly finance: FinanceService,
+    private readonly contracts: ContractsService,
   ) {}
 
   async validateAndMeasure(
@@ -85,11 +87,6 @@ export class BillingService {
         throw new ConflictException('viagem cancelada não pode gerar medição');
       }
       const contract = trip.routeVersion.route.contract;
-      if (!contract.pricingMode || contract.pricingAmountCents === null) {
-        throw new BadRequestException(
-          `contrato ${contract.code} não tem preço configurado (pricingMode/pricingAmountCents)`,
-        );
-      }
 
       const wasAlreadyValidated = trip.execution?.validated === true;
 
@@ -104,6 +101,21 @@ export class BillingService {
         competenceYear,
         competenceMonth,
       );
+
+      // AT-21: preço vigente na COMPETÊNCIA (não o "atual" do contrato).
+      // Reajustes com effectiveFrom ≤ fim-da-competência mudam o preço;
+      // competências anteriores ao reajuste preservam o preço antigo.
+      const pricing = await this.contracts.effectivePricingInTx(
+        tx,
+        contract,
+        competenceYear,
+        competenceMonth,
+      );
+      if (!pricing.pricingMode || pricing.pricingAmountCents === null) {
+        throw new BadRequestException(
+          `contrato ${contract.code} não tem preço vigente na competência ${competenceYear}-${String(competenceMonth).padStart(2, '0')}`,
+        );
+      }
 
       // Garante TripExecution + marca como validada (idempotente).
       const execution = await tx.tripExecution.upsert({
@@ -122,8 +134,8 @@ export class BillingService {
       });
       void execution;
 
-      // Gera medição conforme pricingMode.
-      if (contract.pricingMode === 'PER_TRIP') {
+      // Gera medição conforme pricingMode vigente na competência.
+      if (pricing.pricingMode === 'PER_TRIP') {
         const measurement = await this.upsertPerTripMeasurement(
           tx,
           ctx.tenantId,
@@ -131,8 +143,8 @@ export class BillingService {
           scheduledTripId,
           competenceYear,
           competenceMonth,
-          contract.pricingAmountCents,
-          contract.pricingCurrency,
+          pricing.pricingAmountCents,
+          pricing.currency,
         );
         return {
           tripId: scheduledTripId,
@@ -150,8 +162,8 @@ export class BillingService {
         contract.id,
         competenceYear,
         competenceMonth,
-        contract.pricingAmountCents,
-        contract.pricingCurrency,
+        pricing.pricingAmountCents,
+        pricing.currency,
       );
       return {
         tripId: scheduledTripId,
