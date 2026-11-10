@@ -840,6 +840,18 @@ model Receivable {
   amountCents     BigInt   @map("amount_cents")
   // Soma das alocações; mantida pela aplicação em transação atômica.
   paidCents       BigInt   @default(0) @map("paid_cents")
+  // AT-23: valor contestado pelo cliente. Incontroverso = amount - contested.
+  // Recebimentos aplicam primeiro ao incontroverso; contested fica até ser
+  // resolvido (zerado) ou provisionado como perda.
+  contestedCents  BigInt   @default(0) @map("contested_cents")
+  disputeReason   String?  @map("dispute_reason")
+  disputedAt      DateTime? @map("disputed_at")
+  disputedBy      String?  @map("disputed_by") @db.Uuid
+  // AT-25: antecipação (desconto bancário). Receivable já antecipado não
+  // pode ser antecipado de novo nem ter alocação concorrente.
+  anticipatedAt   DateTime? @map("anticipated_at")
+  anticipatedBy   String?  @map("anticipated_by") @db.Uuid
+  anticipationReference String? @map("anticipation_reference")
   currency        String   @default("BRL") @db.VarChar(3)
   status          ReceivableStatus @default(OPEN)
   issuedAt        DateTime @default(now()) @map("issued_at")

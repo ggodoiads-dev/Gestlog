@@ -20,9 +20,18 @@ import { TenantContextService } from '../../tenant-context/tenant-context.servic
 import { ReceivablesService } from './receivables.service';
 
 const issueSchema = z.object({
-  competenceYear: z.number().int().min(2000).max(2100),
+  competenceYear: z.number().int().min(2000).max(2500),
   competenceMonth: z.number().int().min(1).max(12),
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
+const disputeSchema = z.object({
+  contestedCents: z.number().int().nonnegative(),
+  reason: z.string().min(3).max(500),
+});
+
+const anticipateSchema = z.object({
+  reference: z.string().min(3).max(200),
 });
 
 @ApiTags('ar')
@@ -79,5 +88,29 @@ export class ReceivablesController {
     const r = await this.service.detail(this.requireCtx(req), id);
     if (!r) throw new NotFoundException('recebível não encontrado');
     return r;
+  }
+
+  @Post('receivables/:id/dispute')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions('ar.receivables.dispute')
+  @ApiOperation({ summary: 'AT-23: registra ou resolve contestação' })
+  async dispute(@Req() req: Request, @Param('id') id: string, @Body() body: unknown) {
+    const parsed = disputeSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.issues.map((i) => i.message).join('; '));
+    }
+    return this.service.dispute(this.requireCtx(req), id, parsed.data);
+  }
+
+  @Post('receivables/:id/anticipate')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions('ar.receivables.anticipate')
+  @ApiOperation({ summary: 'AT-25: marca o recebível como antecipado' })
+  async anticipate(@Req() req: Request, @Param('id') id: string, @Body() body: unknown) {
+    const parsed = anticipateSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.issues.map((i) => i.message).join('; '));
+    }
+    return this.service.anticipate(this.requireCtx(req), id, parsed.data);
   }
 }

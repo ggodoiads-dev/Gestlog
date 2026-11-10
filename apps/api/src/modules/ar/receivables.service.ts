@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
 import { BillingService } from '../billing/billing.service';
 
 interface IssueOptions {
@@ -43,7 +44,127 @@ export class ReceivablesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly billing: BillingService,
+    private readonly audit: AuditService,
   ) {}
+
+  /**
+   * AT-23 — registra contestação. `contestedCents` deve ser ≤ amount − paid.
+   * Passar 0 "resolve" a contestação (zera).
+   */
+  async dispute(
+    ctx: { tenantId: string; userId: string },
+    receivableId: string,
+    dto: { contestedCents: number; reason: string },
+  ): Promise<{
+    id: string;
+    contestedCents: string;
+    uncontestedCents: string;
+    paidCents: string;
+  }> {
+    if (!Number.isInteger(dto.contestedCents) || dto.contestedCents < 0) {
+      throw new BadRequestException('contestedCents inválido');
+    }
+    if (!dto.reason || dto.reason.trim().length < 3) {
+      throw new BadRequestException('reason obrigatório (≥ 3 caracteres)');
+    }
+    return this.prisma.withTenantFromCtx(ctx, async (tx) => {
+      const r = await tx.receivable.findUnique({ where: { id: receivableId } });
+      if (!r) throw new NotFoundException('recebível não encontrado');
+      const contested = BigInt(dto.contestedCents);
+      const balance = r.amountCents - r.paidCents;
+      if (contested > balance) {
+        throw new ConflictException(
+          `contested (${contested.toString()}) excede saldo em aberto (${balance.toString()})`,
+        );
+      }
+      const updated = await tx.receivable.update({
+        where: { id: receivableId },
+        data: {
+          contestedCents: contested,
+          disputeReason: contested > 0n ? dto.reason : null,
+          disputedAt: contested > 0n ? new Date() : null,
+          disputedBy: contested > 0n ? ctx.userId : null,
+        },
+      });
+      await this.audit.recordInTx(tx, ctx, {
+        action: contested > 0n ? 'ar.receivable.dispute' : 'ar.receivable.dispute.resolve',
+        subjectType: 'Receivable',
+        subjectId: receivableId,
+        reason: dto.reason,
+        before: { contestedCents: r.contestedCents.toString() },
+        after: { contestedCents: contested.toString() },
+      });
+      return {
+        id: updated.id,
+        contestedCents: updated.contestedCents.toString(),
+        uncontestedCents: (updated.amountCents - updated.contestedCents).toString(),
+        paidCents: updated.paidCents.toString(),
+      };
+    });
+  }
+
+  /**
+   * AT-25 — marca o recebível como antecipado. Nova antecipação do mesmo
+   * recebível retorna 409. Recebível com contestação em aberto NÃO pode
+   * ser antecipado.
+   */
+  async anticipate(
+    ctx: { tenantId: string; userId: string },
+    receivableId: string,
+    dto: { reference: string },
+  ): Promise<{
+    id: string;
+    anticipatedAt: string;
+    reference: string;
+  }> {
+    if (!dto.reference || dto.reference.trim().length < 3) {
+      throw new BadRequestException('reference obrigatório (≥ 3 caracteres)');
+    }
+    return this.prisma.withTenantFromCtx(ctx, async (tx) => {
+      const r = await tx.receivable.findUnique({ where: { id: receivableId } });
+      if (!r) throw new NotFoundException('recebível não encontrado');
+      if (r.anticipatedAt !== null) {
+        throw new ConflictException({
+          message:
+            'recebível já foi antecipado em operação anterior; antecipação dupla é bloqueada (AT-25)',
+          code: 'ALREADY_ANTICIPATED',
+          anticipatedAt: r.anticipatedAt.toISOString(),
+          reference: r.anticipationReference,
+        });
+      }
+      if (r.contestedCents > 0n) {
+        throw new ConflictException({
+          message:
+            'recebível tem valor contestado em aberto; resolva a contestação antes de antecipar',
+          code: 'HAS_DISPUTE',
+          contestedCents: r.contestedCents.toString(),
+        });
+      }
+      if (r.status === 'PAID') {
+        throw new ConflictException('recebível já quitado — nada a antecipar');
+      }
+      const now = new Date();
+      const updated = await tx.receivable.update({
+        where: { id: receivableId },
+        data: {
+          anticipatedAt: now,
+          anticipatedBy: ctx.userId,
+          anticipationReference: dto.reference,
+        },
+      });
+      await this.audit.recordInTx(tx, ctx, {
+        action: 'ar.receivable.anticipate',
+        subjectType: 'Receivable',
+        subjectId: receivableId,
+        after: { anticipatedAt: now.toISOString(), reference: dto.reference },
+      });
+      return {
+        id: updated.id,
+        anticipatedAt: now.toISOString(),
+        reference: dto.reference,
+      };
+    });
+  }
 
   async issueFromPreInvoice(
     ctx: { tenantId: string; userId: string },
