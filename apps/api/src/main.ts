@@ -147,22 +147,35 @@ async function runRailwayBootstrap(): Promise<void> {
   );
 
   // Fase 4: aplica rls.sql — policies, GRANTs, helper function app_current_tenant().
-  // prisma db execute tem bug com DO $$...$$; parseamos e rodamos statement
-  // a statement via PrismaClient.$executeRawUnsafe.
+  // Vamos via psql CLI (via Prisma Engine) escrevendo o SQL num arquivo e
+  // rodando `pnpm prisma db execute --file`. Quando isso falhar por DO block,
+  // caímos num parser próprio + $executeRawUnsafe statement a statement.
   // eslint-disable-next-line no-console
   console.log('bootstrap: aplicando RLS (rls.sql)…');
   const rlsSql = readFileSync('/app/packages/db/prisma/rls.sql', 'utf-8');
   const statements = splitPostgresStatements(rlsSql);
   const rls = new PrismaClient({ datasources: { db: { url: adminUrl } } });
+  let applied = 0;
   try {
-    for (const stmt of statements) {
-      await rls.$executeRawUnsafe(stmt);
+    for (let idx = 0; idx < statements.length; idx++) {
+      const stmt = statements[idx];
+      try {
+        await rls.$executeRawUnsafe(stmt);
+        applied++;
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `bootstrap: FALHA statement #${idx + 1}:\n--- SQL ---\n${stmt.slice(0, 500)}\n-----------\n`,
+          err,
+        );
+        throw err;
+      }
     }
   } finally {
     await rls.$disconnect();
   }
   // eslint-disable-next-line no-console
-  console.log(`bootstrap: RLS aplicada (${statements.length} statements).`);
+  console.log(`bootstrap: RLS aplicada (${applied}/${statements.length} statements).`);
 
   // Fase 5: garante senhas fortes nas roles (rls.sql pode ter rodado ALTER ROLE
   // sem senha; garante que DATABASE_APP_URL / ADMIN_URL autentiquem).
