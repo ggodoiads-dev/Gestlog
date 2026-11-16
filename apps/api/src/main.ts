@@ -37,11 +37,20 @@ async function runRailwayBootstrap(): Promise<void> {
   // foram configuradas assim). superuserUrl aponta para o DB inicial.
   const adminUrl = dbUrl;
 
-  // Fase 1: conecta no DB inicial pra criar "gestlog" se faltar.
+  // Fase 1: conecta no DB inicial. Se GESTLOG_FORCE_RESET=true, dropa e recria.
+  // Caso contrário cria se faltar.
   // eslint-disable-next-line no-console
   console.log(`bootstrap: garantindo database "${target}"…`);
   const sysPrisma = new PrismaClient({ datasources: { db: { url: superuserUrl } } });
   try {
+    if (process.env.GESTLOG_FORCE_RESET === 'true') {
+      // eslint-disable-next-line no-console
+      console.log(`bootstrap: GESTLOG_FORCE_RESET=true → dropando "${target}"`);
+      await sysPrisma.$executeRawUnsafe(
+        `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${target}' AND pid <> pg_backend_pid();`,
+      );
+      await sysPrisma.$executeRawUnsafe(`DROP DATABASE IF EXISTS "${target}"`);
+    }
     const existing = await sysPrisma.$queryRawUnsafe<{ ok: number }[]>(
       `SELECT 1 AS ok FROM pg_database WHERE datname = '${target}'`,
     );
@@ -54,59 +63,54 @@ async function runRailwayBootstrap(): Promise<void> {
     await sysPrisma.$disconnect();
   }
 
-  // Fase 2: conecta no "gestlog" pra criar roles + sanear _prisma_migrations.
+  // Fase 2: conecta no "gestlog" como superuser para criar roles.
   const prisma = new PrismaClient({ datasources: { db: { url: adminUrl } } });
   try {
     await prisma.$executeRawUnsafe(
       `DO $$ BEGIN
          CREATE ROLE gestlog_app LOGIN PASSWORD '${appPwd}' NOBYPASSRLS;
-       EXCEPTION WHEN duplicate_object THEN NULL; END $$;`,
+       EXCEPTION WHEN duplicate_object THEN
+         EXECUTE 'ALTER ROLE gestlog_app WITH LOGIN PASSWORD ''${appPwd}'' NOBYPASSRLS';
+       END $$;`,
     );
     await prisma.$executeRawUnsafe(
       `DO $$ BEGIN
          CREATE ROLE gestlog_admin LOGIN PASSWORD '${adminPwd}' BYPASSRLS;
-       EXCEPTION WHEN duplicate_object THEN NULL; END $$;`,
+       EXCEPTION WHEN duplicate_object THEN
+         EXECUTE 'ALTER ROLE gestlog_admin WITH LOGIN PASSWORD ''${adminPwd}'' BYPASSRLS';
+       END $$;`,
     );
-    // A migration vai executar `ALTER ROLE gestlog_app ... PASSWORD 'gestlog_app'`
-    // e trocar a senha pelo literal. Restauramos depois do migrate deploy.
     await prisma.$executeRawUnsafe(
       `GRANT CONNECT ON DATABASE "${target}" TO gestlog_app, gestlog_admin;`,
     );
-
-    const tblRows = await prisma.$queryRawUnsafe<{ ok: number }[]>(
-      "SELECT 1 AS ok FROM information_schema.tables WHERE table_name = '_prisma_migrations'",
-    );
-    if (tblRows.length > 0) {
-      type Row = { migration_name: string };
-      const rolled = await prisma.$queryRawUnsafe<Row[]>(
-        'DELETE FROM _prisma_migrations WHERE finished_at IS NULL RETURNING migration_name',
-      );
-      if (rolled.length > 0) {
-        // eslint-disable-next-line no-console
-        console.log(
-          'bootstrap: limpou migrations falhadas: ' +
-            rolled.map((r) => r.migration_name).join(', '),
-        );
-      }
-    }
   } finally {
     await prisma.$disconnect();
   }
 
-  // A partir daqui o prisma CLI precisa apontar pra "gestlog", não pro default.
+  // A partir daqui o prisma CLI aponta pra "gestlog".
   process.env.DATABASE_URL = adminUrl;
 
+  // Fase 3: sincroniza schema do Prisma com o banco (sem migrations).
+  // Isso evita problemas das migrations acumuladas em dev que foram
+  // escritas quando o DB se chamava "gestlog" e as senhas eram literais.
   // eslint-disable-next-line no-console
-  console.log('bootstrap: roles ok. Rodando prisma migrate deploy…');
-  execSync('pnpm --filter @gestlog/db prisma:migrate:deploy', {
-    stdio: 'inherit',
-    cwd: '/app',
-    env: { ...process.env, DATABASE_URL: adminUrl },
-  });
+  console.log('bootstrap: sincronizando schema (prisma db push)…');
+  execSync(
+    'pnpm --filter @gestlog/db exec prisma db push --accept-data-loss --skip-generate',
+    { stdio: 'inherit', cwd: '/app', env: { ...process.env, DATABASE_URL: adminUrl } },
+  );
 
-  // A migration redefine as senhas literais 'gestlog_app' / 'gestlog_admin'.
-  // Restauramos as senhas fortes do env para que DATABASE_APP_URL / ADMIN_URL
-  // (ainda apontando pra "gestlog") autentiquem.
+  // Fase 4: aplica rls.sql — policies, GRANTs, helper function app_current_tenant().
+  // eslint-disable-next-line no-console
+  console.log('bootstrap: aplicando RLS (rls.sql)…');
+  execSync(
+    'pnpm --filter @gestlog/db exec prisma db execute ' +
+      '--file prisma/rls.sql --url "$DATABASE_URL"',
+    { stdio: 'inherit', cwd: '/app', env: { ...process.env, DATABASE_URL: adminUrl }, shell: '/bin/bash' },
+  );
+
+  // Fase 5: garante senhas fortes nas roles (rls.sql pode ter rodado ALTER ROLE
+  // sem senha; garante que DATABASE_APP_URL / ADMIN_URL autentiquem).
   const fix = new PrismaClient({ datasources: { db: { url: adminUrl } } });
   try {
     await fix.$executeRawUnsafe(
@@ -116,7 +120,7 @@ async function runRailwayBootstrap(): Promise<void> {
       `ALTER ROLE gestlog_admin WITH LOGIN PASSWORD '${adminPwd}' BYPASSRLS;`,
     );
     // eslint-disable-next-line no-console
-    console.log('bootstrap: senhas restauradas, pronto pra start.');
+    console.log('bootstrap: tudo pronto. Iniciando NestJS.');
   } finally {
     await fix.$disconnect();
   }
