@@ -9,6 +9,7 @@ import { Logger } from 'nestjs-pino';
 import pg from 'pg';
 
 import { AppModule } from './app.module';
+import { runDemoSeed } from './railway-seed';
 
 // Divide um script Postgres em statements individuais, respeitando blocos
 // `$$ ... $$` (DO blocks, bodies de FUNCTION) que podem conter ; internos.
@@ -164,8 +165,18 @@ async function runRailwayBootstrap(): Promise<void> {
   // eslint-disable-next-line no-console
   console.log('bootstrap: RLS aplicada.');
 
-  // Fase 5: garante senhas fortes nas roles (rls.sql pode ter rodado ALTER ROLE
-  // sem senha; garante que DATABASE_APP_URL / ADMIN_URL autentiquem).
+  // Fase 5: aplica seeds estáticos (permissions do catálogo) + senhas fortes.
+  // eslint-disable-next-line no-console
+  console.log('bootstrap: aplicando seeds-static.sql…');
+  const seedsSql = readFileSync('/app/packages/db/prisma/seeds-static.sql', 'utf-8');
+  const pgSeed = new pg.Client({ connectionString: adminUrl });
+  await pgSeed.connect();
+  try {
+    await pgSeed.query(seedsSql);
+  } finally {
+    await pgSeed.end();
+  }
+
   const fix = new PrismaClient({ datasources: { db: { url: adminUrl } } });
   try {
     await fix.$executeRawUnsafe(
@@ -174,11 +185,23 @@ async function runRailwayBootstrap(): Promise<void> {
     await fix.$executeRawUnsafe(
       `ALTER ROLE gestlog_admin WITH LOGIN PASSWORD '${adminPwd}' BYPASSRLS;`,
     );
-    // eslint-disable-next-line no-console
-    console.log('bootstrap: tudo pronto. Iniciando NestJS.');
   } finally {
     await fix.$disconnect();
   }
+
+  // Fase 6: seeds de demo (tenants + usuários + clients + contracts), opt-in.
+  if (process.env.FEATURE_DEMO_SEEDS === 'true') {
+    // eslint-disable-next-line no-console
+    console.log('bootstrap: rodando seeds de demo…');
+    const seedPrisma = new PrismaClient({ datasources: { db: { url: adminUrl } } });
+    try {
+      await runDemoSeed(seedPrisma);
+    } finally {
+      await seedPrisma.$disconnect();
+    }
+  }
+  // eslint-disable-next-line no-console
+  console.log('bootstrap: tudo pronto. Iniciando NestJS.');
 }
 
 async function bootstrap(): Promise<void> {
