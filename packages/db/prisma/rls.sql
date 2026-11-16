@@ -117,4 +117,4 @@ CREATE OR REPLACE RULE audit_no_update AS
   ON UPDATE TO audit.audit_events DO INSTEAD NOTHING;
 
 CREATE OR REPLACE RULE audit_no_delete AS
-  ON DELETE FROM audit.audit_events DO INSTEAD NOTHING;
+  ON DELETE TO audit.audit_events DO INSTEAD NOTHING;
