@@ -1,4 +1,5 @@
 import { execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
@@ -7,6 +8,51 @@ import { PrismaClient } from '@prisma/client';
 import { Logger } from 'nestjs-pino';
 
 import { AppModule } from './app.module';
+
+// Divide um script Postgres em statements individuais, respeitando blocos
+// `$$ ... $$` (DO blocks, bodies de FUNCTION) que podem conter ; internos.
+// Também ignora `--` até fim de linha e tolera tags dollar-quoted `$tag$`.
+function splitPostgresStatements(sql: string): string[] {
+  const out: string[] = [];
+  let buf = '';
+  let i = 0;
+  const n = sql.length;
+  let dollarTag: string | null = null; // null = fora de bloco $$; string = tag atual
+  while (i < n) {
+    // Comentário de linha
+    if (dollarTag === null && sql[i] === '-' && sql[i + 1] === '-') {
+      while (i < n && sql[i] !== '\n') i++;
+      continue;
+    }
+    // Entrada/saída de bloco dollar-quoted
+    if (sql[i] === '$') {
+      const m = sql.slice(i).match(/^\$([A-Za-z_][A-Za-z0-9_]*)?\$/);
+      if (m) {
+        const tag = m[1] ?? '';
+        if (dollarTag === null) {
+          dollarTag = tag;
+        } else if (dollarTag === tag) {
+          dollarTag = null;
+        }
+        buf += m[0];
+        i += m[0].length;
+        continue;
+      }
+    }
+    if (dollarTag === null && sql[i] === ';') {
+      const t = buf.trim();
+      if (t) out.push(t);
+      buf = '';
+      i++;
+      continue;
+    }
+    buf += sql[i];
+    i++;
+  }
+  const t = buf.trim();
+  if (t) out.push(t);
+  return out;
+}
 
 // Em ambientes novos (Railway), executa ANTES do NestFactory:
 //   1. cria as roles RLS (idempotente);
@@ -101,13 +147,22 @@ async function runRailwayBootstrap(): Promise<void> {
   );
 
   // Fase 4: aplica rls.sql — policies, GRANTs, helper function app_current_tenant().
+  // prisma db execute tem bug com DO $$...$$; parseamos e rodamos statement
+  // a statement via PrismaClient.$executeRawUnsafe.
   // eslint-disable-next-line no-console
   console.log('bootstrap: aplicando RLS (rls.sql)…');
-  execSync(
-    'pnpm --filter @gestlog/db exec prisma db execute ' +
-      '--file prisma/rls.sql --url "$DATABASE_URL"',
-    { stdio: 'inherit', cwd: '/app', env: { ...process.env, DATABASE_URL: adminUrl }, shell: '/bin/bash' },
-  );
+  const rlsSql = readFileSync('/app/packages/db/prisma/rls.sql', 'utf-8');
+  const statements = splitPostgresStatements(rlsSql);
+  const rls = new PrismaClient({ datasources: { db: { url: adminUrl } } });
+  try {
+    for (const stmt of statements) {
+      await rls.$executeRawUnsafe(stmt);
+    }
+  } finally {
+    await rls.$disconnect();
+  }
+  // eslint-disable-next-line no-console
+  console.log(`bootstrap: RLS aplicada (${statements.length} statements).`);
 
   // Fase 5: garante senhas fortes nas roles (rls.sql pode ter rodado ALTER ROLE
   // sem senha; garante que DATABASE_APP_URL / ADMIN_URL autentiquem).
