@@ -6,6 +6,7 @@ import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { PrismaClient } from '@prisma/client';
 import { Logger } from 'nestjs-pino';
+import pg from 'pg';
 
 import { AppModule } from './app.module';
 
@@ -146,36 +147,22 @@ async function runRailwayBootstrap(): Promise<void> {
     { stdio: 'inherit', cwd: '/app', env: { ...process.env, DATABASE_URL: adminUrl } },
   );
 
-  // Fase 4: aplica rls.sql — policies, GRANTs, helper function app_current_tenant().
-  // Vamos via psql CLI (via Prisma Engine) escrevendo o SQL num arquivo e
-  // rodando `pnpm prisma db execute --file`. Quando isso falhar por DO block,
-  // caímos num parser próprio + $executeRawUnsafe statement a statement.
+  // Fase 4: aplica rls.sql via pg direto (simple query protocol).
+  // Prisma $executeRawUnsafe usa extended protocol que rejeita DO blocks e
+  // outras construções válidas do Postgres; pg.Client.query executa o script
+  // inteiro de uma só vez sem parse ambíguo.
   // eslint-disable-next-line no-console
-  console.log('bootstrap: aplicando RLS (rls.sql)…');
+  console.log('bootstrap: aplicando RLS (rls.sql via pg direto)…');
   const rlsSql = readFileSync('/app/packages/db/prisma/rls.sql', 'utf-8');
-  const statements = splitPostgresStatements(rlsSql);
-  const rls = new PrismaClient({ datasources: { db: { url: adminUrl } } });
-  let applied = 0;
+  const pgClient = new pg.Client({ connectionString: adminUrl });
+  await pgClient.connect();
   try {
-    for (let idx = 0; idx < statements.length; idx++) {
-      const stmt = statements[idx];
-      try {
-        await rls.$executeRawUnsafe(stmt);
-        applied++;
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error(
-          `bootstrap: FALHA statement #${idx + 1}:\n--- SQL ---\n${stmt.slice(0, 500)}\n-----------\n`,
-          err,
-        );
-        throw err;
-      }
-    }
+    await pgClient.query(rlsSql);
   } finally {
-    await rls.$disconnect();
+    await pgClient.end();
   }
   // eslint-disable-next-line no-console
-  console.log(`bootstrap: RLS aplicada (${applied}/${statements.length} statements).`);
+  console.log('bootstrap: RLS aplicada.');
 
   // Fase 5: garante senhas fortes nas roles (rls.sql pode ter rodado ALTER ROLE
   // sem senha; garante que DATABASE_APP_URL / ADMIN_URL autentiquem).

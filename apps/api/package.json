@@ -2,7 +2,7 @@
   "name": "@gestlog/api",
   "version": "0.0.0",
   "private": true,
-  "description": "GESTLOG API — NestJS modular monolith.",
+  "description": "GESTLOG API \u2014 NestJS modular monolith.",
   "scripts": {
     "build": "nest build",
     "dev": "nest start --watch",
@@ -33,7 +33,8 @@
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "uuid": "^11.0.3",
-    "zod": "^3.24.1"
+    "zod": "^3.24.1",
+    "pg": "^8.13.1"
   },
   "devDependencies": {
     "@gestlog/config": "workspace:*",
@@ -49,6 +50,7 @@
     "supertest": "^7.0.0",
     "tsx": "^4.23.15",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "^2.1.8",
+    "@types/pg": "^8.11.10"
   }
 }
