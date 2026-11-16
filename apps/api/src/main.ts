@@ -20,10 +20,11 @@ async function runRailwayBootstrap(): Promise<void> {
   const appPwd = process.env.GESTLOG_APP_PASSWORD;
   const adminPwd = process.env.GESTLOG_ADMIN_PASSWORD;
   const dbUrl = process.env.DATABASE_URL;
-  if (!appPwd || !adminPwd || !dbUrl) {
+  const superuserUrl = process.env.DATABASE_SUPERUSER_URL;
+  if (!appPwd || !adminPwd || !dbUrl || !superuserUrl) {
     // eslint-disable-next-line no-console
     console.error(
-      'bootstrap: faltam GESTLOG_APP_PASSWORD / GESTLOG_ADMIN_PASSWORD / DATABASE_URL',
+      'bootstrap: faltam GESTLOG_APP_PASSWORD / GESTLOG_ADMIN_PASSWORD / DATABASE_URL / DATABASE_SUPERUSER_URL',
     );
     process.exit(1);
   }
@@ -32,12 +33,14 @@ async function runRailwayBootstrap(): Promise<void> {
   // O Postgres do Railway nasce com um DB chamado "railway"; criamos "gestlog"
   // à parte para que as migrations rodem iguais a dev local.
   const target = 'gestlog';
-  const adminUrl = dbUrl.replace(/\/[^/?]+(\?|$)/, `/${target}$1`);
+  // adminUrl = DATABASE_URL já apontando pra "gestlog" (as env vars DATABASE_*
+  // foram configuradas assim). superuserUrl aponta para o DB inicial.
+  const adminUrl = dbUrl;
 
   // Fase 1: conecta no DB inicial pra criar "gestlog" se faltar.
   // eslint-disable-next-line no-console
   console.log(`bootstrap: garantindo database "${target}"…`);
-  const sysPrisma = new PrismaClient({ datasources: { db: { url: dbUrl } } });
+  const sysPrisma = new PrismaClient({ datasources: { db: { url: superuserUrl } } });
   try {
     const existing = await sysPrisma.$queryRawUnsafe<{ ok: number }[]>(
       `SELECT 1 AS ok FROM pg_database WHERE datname = '${target}'`,
