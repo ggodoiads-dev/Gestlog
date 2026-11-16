@@ -16,10 +16,10 @@
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'gestlog_app') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'gestlog_app') THEN
     CREATE ROLE gestlog_app NOLOGIN;
   END IF;
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'gestlog_platform_admin') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'gestlog_platform_admin') THEN
     CREATE ROLE gestlog_platform_admin NOLOGIN BYPASSRLS;
   END IF;
 END$$;
