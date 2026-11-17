@@ -165,6 +165,42 @@ async function runRailwayBootstrap(): Promise<void> {
   // eslint-disable-next-line no-console
   console.log('bootstrap: RLS aplicada.');
 
+  // Fase 4.5: GRANTs completos para gestlog_app e gestlog_admin.
+  // O rls.sql cobre só 7 schemas antigos e nomeia a role admin de
+  // "gestlog_platform_admin"; aqui alinhamos com a arquitetura atual.
+  const allSchemas = [
+    'core', 'clients', 'clm', 'routing', 'workforce', 'fleet', 'operations',
+    'audit', 'billing', 'ar', 'procurement', 'ap', 'governance', 'finance',
+    'fuel', 'assets',
+  ];
+  // eslint-disable-next-line no-console
+  console.log('bootstrap: aplicando GRANTs em ' + allSchemas.length + ' schemas…');
+  const grantClient = new pg.Client({ connectionString: adminUrl });
+  await grantClient.connect();
+  try {
+    const schemaList = allSchemas.join(', ');
+    await grantClient.query(
+      `GRANT USAGE ON SCHEMA ${schemaList} TO gestlog_app, gestlog_admin;`,
+    );
+    await grantClient.query(
+      `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${schemaList} TO gestlog_app, gestlog_admin;`,
+    );
+    await grantClient.query(
+      `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ${schemaList} TO gestlog_app, gestlog_admin;`,
+    );
+    // Default privileges para tabelas futuras (seed cria tabelas dinamicamente via Prisma, mas por segurança).
+    for (const s of allSchemas) {
+      await grantClient.query(
+        `ALTER DEFAULT PRIVILEGES IN SCHEMA ${s} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO gestlog_app, gestlog_admin;`,
+      );
+      await grantClient.query(
+        `ALTER DEFAULT PRIVILEGES IN SCHEMA ${s} GRANT USAGE, SELECT ON SEQUENCES TO gestlog_app, gestlog_admin;`,
+      );
+    }
+  } finally {
+    await grantClient.end();
+  }
+
   // Fase 5: aplica seeds estáticos (permissions do catálogo) + senhas fortes.
   // eslint-disable-next-line no-console
   console.log('bootstrap: aplicando seeds-static.sql…');
